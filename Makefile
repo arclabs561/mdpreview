@@ -1,14 +1,32 @@
-mdpreview: static/github.css server/asset.go
+.PHONY: all build install test clean css
 
-.PHONY: server/asset.go
-server/asset.go:
-	GO111MODULES=off go get -u github.com/jteeuwen/go-bindata/...
-	go-bindata -pkg server -o server/asset.go static/...
-	gofmt -w server/asset.go
+all: build
 
-.PHONY: static/github.css
-static/github.css:
-	npm install --global generate-github-markdown-css
-	github-markdown-css > static/github.css
-	go get github.com/tdewolff/minify/cmd/minify
-	minify -o static/github.css static/github.css
+build:
+	go build -o mdpreview .
+
+install:
+	go install .
+
+test:
+	go test -v -race -cover ./...
+
+clean:
+	rm -f mdpreview
+	go clean
+
+# Update GitHub CSS styling
+css:
+	@command -v generate-github-markdown-css >/dev/null 2>&1 || npm install --global generate-github-markdown-css
+	generate-github-markdown-css > server/static/github.css
+	@command -v minify >/dev/null 2>&1 || go install github.com/tdewolff/minify/v2/cmd/minify@latest
+	minify -o server/static/github.css server/static/github.css
+
+# Run linters and formatters
+lint:
+	go fmt ./...
+	go vet ./...
+	@command -v staticcheck >/dev/null 2>&1 || go install honnef.co/go/tools/cmd/staticcheck@latest
+	staticcheck ./...
+	@command -v golangci-lint >/dev/null 2>&1 || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	golangci-lint run

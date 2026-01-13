@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	negronilogrus "github.com/meatballhat/negroni-logrus"
 	"github.com/sirupsen/logrus"
@@ -29,10 +33,13 @@ func main() {
 		log.SetLevel(logrus.DebugLevel)
 	}
 
-	if len(os.Args) < 2 {
-		log.Fatal("path must be given")
+	// Fix: Use flag.Args() instead of os.Args after flag.Parse()
+	args := flag.Args()
+	if len(args) < 1 {
+		log.Fatal("markdown file path must be provided as an argument")
 	}
-	path := os.Args[1]
+	path := args[0]
+
 	if filepath.Ext(path) != ".md" {
 		log.Warnf("path %s doesn't look like a Markdown file", path)
 	}
@@ -40,7 +47,11 @@ func main() {
 		log.Fatalf("path %s does not exist", path)
 	}
 
-	s, err := server.New(path, log, !*api)
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s, err := server.New(ctx, path, log, !*api)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -53,12 +64,46 @@ func main() {
 		*addr = fmt.Sprintf("127.0.0.1%s", *addr)
 	}
 
-	log.Info(fmt.Sprintf("Starting mdpreview server at %s", *addr))
+	// Setup HTTP server with timeouts
+	srv := &http.Server{
+		Addr:         *addr,
+		Handler:      createHandler(h, log),
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in goroutine
+	go func() {
+		log.Infof("Starting mdpreview server at http://%s", *addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Server failed: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal for graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("Shutting down server...")
+	cancel() // Cancel context to signal goroutines
+
+	// Graceful shutdown with timeout
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Errorf("Server forced to shutdown: %v", err)
+	}
+
+	log.Info("Server stopped")
+}
+
+func createHandler(h http.Handler, log *logrus.Logger) http.Handler {
 	n := negroni.New()
 	n.Use(negroni.NewRecovery())
 	n.Use(negronilogrus.NewMiddlewareFromLogger(log, "web"))
 	n.UseHandler(h)
-	if err := http.ListenAndServe(*addr, n); err != nil {
-		log.Fatal(err)
-	}
+	return n
 }

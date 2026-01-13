@@ -1,12 +1,11 @@
 module github.com/henrywallace/mdpreview
 
-go 1.20
+go 1.21
 
 require (
-	github.com/elazarl/go-bindata-assetfs v1.0.1
-	github.com/fsnotify/fsnotify v1.6.0
-	github.com/gorilla/mux v1.8.0
-	github.com/gorilla/websocket v1.5.0
+	github.com/fsnotify/fsnotify v1.7.0
+	github.com/gorilla/mux v1.8.1
+	github.com/gorilla/websocket v1.5.1
 	github.com/meatballhat/negroni-logrus v1.1.1
 	github.com/shurcooL/github_flavored_markdown v0.0.0-20210228213109-c3a9aa474629
 	github.com/sirupsen/logrus v1.9.3
@@ -27,6 +26,6 @@ require (
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	github.com/sourcegraph/annotate v0.0.0-20160123013949-f4cad6c6324d // indirect
 	github.com/sourcegraph/syntaxhighlight v0.0.0-20170531221838-bd320f5d308e // indirect
-	golang.org/x/net v0.12.0 // indirect
-	golang.org/x/sys v0.10.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
 )
