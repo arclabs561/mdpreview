@@ -26,4 +26,4 @@ mdpreview README.md
 
 ## License
 
-Dual-licensed under MIT or the UNLICENSE.
+Licensed under MIT.
