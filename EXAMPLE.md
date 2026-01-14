@@ -1,6 +1,6 @@
-# Welcome to mdpreview! 🎉
+# Welcome to mdpreview
 
-A beautiful WYSIWYG Markdown editor with GitHub styling, math support, and more.
+A markdown editor/preview surface.
 
 ## Features Demo
 
@@ -64,7 +64,7 @@ def quicksort(arr):
 
 ### Links and Images
 
-Check out the [GitHub repository](https://github.com/henrywallace/mdpreview).
+Repository: `https://github.com/arclabs561/mdpreview`.
 
 ### Quotes
 
@@ -87,13 +87,10 @@ Ordered list:
 
 ---
 
-## Try It Out!
+## Try It Out
 
-1. Start editing this file in **WYSIWYG mode** (default)
-2. Toggle to **Markdown mode** to see the raw markdown
-3. Try the **dark mode** toggle
+1. Start editing this file in WYSIWYG mode (default)
+2. Toggle to Markdown mode to see the raw markdown
+3. Try the dark mode toggle
 4. Save with `Ctrl+S` (auto-saves after 1 second)
 5. Watch the status indicator show connection state
-
-Enjoy writing! ✨
-
