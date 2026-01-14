@@ -1,4 +1,4 @@
-module github.com/henrywallace/mdpreview
+module github.com/arclabs561/mdpreview
 
 go 1.21
 
