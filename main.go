@@ -16,7 +16,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/negroni"
 
-	"github.com/henrywallace/mdpreview/server"
+	"github.com/arclabs561/mdpreview/server"
 )
 
 var (
