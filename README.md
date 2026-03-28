@@ -1,43 +1,32 @@
 # mdpreview
 
-A beautiful, modern WYSIWYG Markdown editor and preview tool with GitHub-flavored styling, math rendering, and real-time collaboration features.
+Markdown preview server with live reload.
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/henrywallace/mdpreview)](https://goreportcard.com/report/github.com/henrywallace/mdpreview)
 [![GoDoc](https://godoc.org/github.com/henrywallace/mdpreview?status.svg)](https://godoc.org/github.com/henrywallace/mdpreview)
 
 ## Features
 
-### ✨ WYSIWYG Editing
-- **True WYSIWYG mode** - Edit and see formatted output simultaneously (like Notion or Typora)
-- **Markdown mode** - Classic markdown editing with syntax highlighting
-- **Seamless switching** - Toggle between WYSIWYG and markdown modes instantly
-- **Rich toolbar** - Easy formatting with visual controls
+### Editing
+- WYSIWYG mode -- edit and see formatted output simultaneously
+- Markdown mode -- syntax-highlighted source editing
+- Toggle between modes with toolbar button or `Ctrl+Shift+M`
 
-### 🎨 Modern Design
-- **GitHub color scheme** - Authentic GitHub Primer design system
-- **Dark mode** - Automatic system theme detection + manual toggle
-- **Responsive** - Works beautifully on desktop, tablet, and mobile
-- **Clean interface** - Distraction-free writing experience
+### Rendering
+- Math via KaTeX (`$inline$` and `$$block$$`)
+- Syntax highlighting via Highlight.js
+- GFM tables, task lists, auto-linking
 
-### 🧮 Advanced Features
-- **Math rendering** - Full LaTeX support via KaTeX (`$inline$` and `$$block$$`)
-- **Syntax highlighting** - Beautiful code blocks with Highlight.js
-- **Tables** - Full GFM table support
-- **Task lists** - Interactive checkboxes `- [ ] Todo`
-- **Auto-linking** - URLs automatically become clickable links
+### Live sync
+- WebSocket-based updates
+- Auto-save after 1 second of inactivity
+- File watching -- external changes reflected immediately
+- Atomic writes (temp file + rename)
+- Graceful shutdown on SIGINT/SIGTERM
 
-### ⚡ Performance & Reliability
-- **Real-time sync** - WebSocket-based instant updates
-- **Auto-save** - Saves after 1 second of inactivity
-- **Live file watching** - External changes reflected immediately  
-- **Atomic writes** - Safe file operations prevent data loss
-- **Fast** - Built with Go for maximum performance
-- **Graceful shutdown** - Clean connection handling
-
-### 🔒 Security
-- **Origin checking** - CSRF protection for WebSocket connections
-- **Sandboxed rendering** - Safe HTML rendering
-- **Error handling** - Comprehensive error recovery
+### Other
+- GitHub Primer color scheme with dark mode (system detection + manual toggle)
+- CSRF origin checking on WebSocket connections
 
 ## Installation
 
@@ -153,13 +142,13 @@ make css
 ### WYSIWYG Mode
 Edit and see the formatted output in real-time:
 ```
-[Imagine a beautiful WYSIWYG editor with GitHub styling]
+[WYSIWYG editor with GitHub styling]
 ```
 
 ### Dark Mode
 Automatic theme switching based on system preferences:
 ```
-[Imagine the same editor in gorgeous dark mode]
+[Dark mode variant]
 ```
 
 ## How it works
@@ -167,7 +156,7 @@ Automatic theme switching based on system preferences:
 1. **Server starts** - Go HTTP server with WebSocket support
 2. **WYSIWYG editor** - Toast UI Editor with GitHub styling loads in browser
 3. **Two-way sync** - Edit in browser → auto-save to file → watch for external changes
-4. **Math & code** - KaTeX renders equations, Highlight.js beautifies code
+4. **Math & code** - KaTeX renders equations, Highlight.js highlights code
 5. **Live collaboration** - Multiple clients can view the same file simultaneously
 
 ## Architecture
@@ -247,5 +236,5 @@ MIT License - see [LICENSE](LICENSE) file for details
 
 - Uses [github_flavored_markdown](https://github.com/shurcooL/github_flavored_markdown) for rendering
 - Inspired by various Markdown preview tools
-- GitHub for the beautiful Markdown styling
+- GitHub Primer CSS for Markdown styling
 
