@@ -35,3 +35,6 @@ Thumbs.db
 .env.*
 *.log
 build/
+# Test artifacts
+*.png
+.playwright-mcp/
