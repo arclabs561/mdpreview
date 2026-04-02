@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -32,18 +34,33 @@ func main() {
 		log.SetLevel(logrus.DebugLevel)
 	}
 
-	// Fix: Use flag.Args() instead of os.Args after flag.Parse()
 	args := flag.Args()
 	if len(args) < 1 {
-		log.Fatal("markdown file path must be provided as an argument")
+		log.Fatal("usage: mdpreview <file.md | directory>")
 	}
 	path := args[0]
 
-	if filepath.Ext(path) != ".md" {
-		log.Warnf("path %s doesn't look like a Markdown file", path)
+	// If given a directory, look for README.md
+	info, err := os.Stat(path)
+	if err != nil {
+		log.Fatalf("path %s: %v", path, err)
 	}
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		log.Fatalf("path %s does not exist", path)
+	if info.IsDir() {
+		candidates := []string{"README.md", "readme.md", "Readme.md"}
+		found := false
+		for _, c := range candidates {
+			p := filepath.Join(path, c)
+			if _, err := os.Stat(p); err == nil {
+				path = p
+				found = true
+				break
+			}
+		}
+		if !found {
+			log.Fatalf("no README.md found in %s", path)
+		}
+	} else if filepath.Ext(path) != ".md" {
+		log.Warnf("path %s doesn't look like a Markdown file", path)
 	}
 
 	// Create context for graceful shutdown
@@ -72,12 +89,19 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in goroutine
+	// Start server and open browser
+	url := fmt.Sprintf("http://%s", *addr)
 	go func() {
-		log.Infof("Starting mdpreview server at http://%s", *addr)
+		log.Infof("Starting mdpreview server at %s", url)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Server failed: %v", err)
 		}
+	}()
+
+	// Give the server a moment to start, then open browser
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		openBrowser(url)
 	}()
 
 	// Wait for interrupt signal for graceful shutdown
@@ -97,6 +121,19 @@ func main() {
 	}
 
 	log.Info("Server stopped")
+}
+
+func openBrowser(url string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", url)
+	case "linux":
+		cmd = exec.Command("xdg-open", url)
+	default:
+		return
+	}
+	cmd.Run()
 }
 
 func createHandler(h http.Handler, log *logrus.Logger) http.Handler {
