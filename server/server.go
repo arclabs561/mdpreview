@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"embed"
+	"encoding/json"
 	"html/template"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -128,12 +131,238 @@ func (s *Server) setupHandlers() http.Handler {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/", s.handleIndex).Methods("GET")
+	r.HandleFunc("/api/tree", s.handleTree).Methods("GET")
+	r.HandleFunc("/api/raw", s.handleRaw).Methods("GET")
 	r.HandleFunc("/ws", s.handleWebSocket).Methods("GET")
 	r.PathPrefix("/files/").Handler(localFileHandler).Methods("GET")
 	r.PathPrefix("/").Handler(staticFileHandler).Methods("GET")
 
 	return r
 }
+
+// TreeEntry represents a file or directory in the tree.
+type TreeEntry struct {
+	Name     string      `json:"name"`
+	Path     string      `json:"path"`
+	IsDir    bool        `json:"isDir"`
+	Status   string      `json:"status,omitempty"` // M=modified, A=added, ?=untracked, D=deleted
+	Children []TreeEntry `json:"children,omitempty"`
+}
+
+func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
+	files := s.gitTrackedFiles()
+	statusMap := s.gitStatus()
+	tree := buildTreeFromPaths(files, statusMap)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tree)
+}
+
+// gitTrackedFiles returns all tracked files (git ls-files), falling back
+// to a directory walk if not in a git repo.
+func (s *Server) gitTrackedFiles() []string {
+	cmd := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard")
+	cmd.Dir = s.rootDir
+	out, err := cmd.Output()
+	if err != nil {
+		// Not a git repo, fall back to directory listing
+		return s.walkFiles()
+	}
+	var files []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line != "" {
+			files = append(files, line)
+		}
+	}
+	return files
+}
+
+func (s *Server) walkFiles() []string {
+	var files []string
+	filepath.WalkDir(s.rootDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor" {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(s.rootDir, path)
+			files = append(files, rel)
+		}
+		return nil
+	})
+	return files
+}
+
+// gitStatus returns a map of file path -> status code.
+func (s *Server) gitStatus() map[string]string {
+	cmd := exec.Command("git", "status", "--porcelain=v1")
+	cmd.Dir = s.rootDir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	result := make(map[string]string)
+	for _, line := range strings.Split(string(out), "\n") {
+		if len(line) < 4 {
+			continue
+		}
+		xy := strings.TrimSpace(line[:2])
+		file := strings.TrimSpace(line[3:])
+		// Handle renames: "R  old -> new"
+		if idx := strings.Index(file, " -> "); idx >= 0 {
+			file = file[idx+4:]
+		}
+		switch {
+		case strings.Contains(xy, "?"):
+			result[file] = "?"
+		case strings.Contains(xy, "A"):
+			result[file] = "A"
+		case strings.Contains(xy, "D"):
+			result[file] = "D"
+		default:
+			result[file] = "M"
+		}
+	}
+	return result
+}
+
+// buildTreeFromPaths creates a nested tree from flat file paths.
+func buildTreeFromPaths(files []string, statusMap map[string]string) []TreeEntry {
+	type node struct {
+		name     string
+		path     string
+		isDir    bool
+		status   string
+		children map[string]*node
+		order    []string // preserve insertion order
+	}
+
+	root := &node{children: make(map[string]*node)}
+
+	for _, file := range files {
+		parts := strings.Split(file, "/")
+		cur := root
+		for i, part := range parts {
+			if _, ok := cur.children[part]; !ok {
+				isDir := i < len(parts)-1
+				p := strings.Join(parts[:i+1], "/")
+				n := &node{
+					name:     part,
+					path:     p,
+					isDir:    isDir,
+					children: make(map[string]*node),
+				}
+				if !isDir {
+					if st, ok := statusMap[file]; ok {
+						n.status = st
+					}
+				}
+				cur.children[part] = n
+				cur.order = append(cur.order, part)
+			} else if i < len(parts)-1 {
+				// Ensure intermediate dirs are marked as dirs
+				cur.children[part].isDir = true
+			}
+			cur = cur.children[part]
+		}
+	}
+
+	// Propagate status up: if any child is modified, parent dir gets "M"
+	var propagate func(n *node) string
+	propagate = func(n *node) string {
+		if !n.isDir {
+			return n.status
+		}
+		for _, name := range n.order {
+			child := n.children[name]
+			childStatus := propagate(child)
+			if childStatus != "" && n.status == "" {
+				n.status = childStatus
+			}
+		}
+		return n.status
+	}
+	propagate(root)
+
+	var convert func(n *node) []TreeEntry
+	convert = func(n *node) []TreeEntry {
+		var entries []TreeEntry
+		for _, name := range n.order {
+			child := n.children[name]
+			e := TreeEntry{
+				Name:   child.name,
+				Path:   child.path,
+				IsDir:  child.isDir,
+				Status: child.status,
+			}
+			if child.isDir {
+				e.Children = convert(child)
+			}
+			entries = append(entries, e)
+		}
+		// Sort: directories first, then by name
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].IsDir != entries[j].IsDir {
+				return entries[i].IsDir
+			}
+			return entries[i].Name < entries[j].Name
+		})
+		return entries
+	}
+
+	return convert(root)
+}
+
+func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	absPath, err := s.resolveFile(file)
+	if err != nil {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	// Limit to reasonable file sizes (1MB)
+	if info.Size() > 1<<20 {
+		http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	// Check if binary
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		http.Error(w, "Read error", http.StatusInternalServerError)
+		return
+	}
+	if isBinary(content) {
+		http.Error(w, "Binary file", http.StatusUnsupportedMediaType)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write(content)
+}
+
+func isBinary(data []byte) bool {
+	// Check first 512 bytes for null bytes
+	check := data
+	if len(check) > 512 {
+		check = check[:512]
+	}
+	for _, b := range check {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("file")

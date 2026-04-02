@@ -2,11 +2,9 @@ import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import katex from 'katex';
 
-// Fine-grained theme imports (only the two we need)
 import githubDark from 'shiki/themes/github-dark.mjs';
 import githubLight from 'shiki/themes/github-light.mjs';
 
-// Fine-grained language imports
 import langBash from 'shiki/langs/bash.mjs';
 import langC from 'shiki/langs/c.mjs';
 import langCpp from 'shiki/langs/cpp.mjs';
@@ -31,6 +29,60 @@ import langXml from 'shiki/langs/xml.mjs';
 import langYaml from 'shiki/langs/yaml.mjs';
 
 let highlighter: HighlighterCore | null = null;
+let ws: WebSocket | null = null;
+let currentFile = '';
+
+const LANG_MAP: Record<string, string> = {
+  sh: 'bash', zsh: 'bash', bash: 'bash',
+  c: 'c', h: 'c',
+  cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp',
+  css: 'css', scss: 'css',
+  diff: 'diff', patch: 'diff',
+  dockerfile: 'dockerfile',
+  go: 'go',
+  htm: 'html', html: 'html',
+  java: 'java',
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  json: 'json', jsonc: 'json',
+  md: 'markdown',
+  py: 'python',
+  rb: 'ruby',
+  rs: 'rust',
+  sql: 'sql',
+  swift: 'swift',
+  toml: 'toml',
+  ts: 'typescript', mts: 'typescript', cts: 'typescript',
+  tsx: 'tsx', jsx: 'tsx',
+  xml: 'xml', svg: 'xml',
+  yml: 'yaml', yaml: 'yaml',
+  makefile: 'bash',
+};
+
+// DOM elements
+const sidebar = document.getElementById('sidebar')!;
+const fileTree = document.getElementById('fileTree')!;
+const breadcrumb = document.getElementById('breadcrumb')!;
+const content = document.getElementById('content')!;
+const statusDot = document.getElementById('statusDot')!;
+const statusText = document.getElementById('statusText')!;
+
+interface TreeEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  status?: string; // M=modified, A=added, ?=untracked, D=deleted
+  children?: TreeEntry[];
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  'M': '#d29922', // yellow - modified
+  'A': '#3fb950', // green - added
+  '?': '#8b949e', // gray - untracked
+  'D': '#f85149', // red - deleted
+};
+const STATUS_LABELS: Record<string, string> = {
+  'M': 'M', 'A': 'A', '?': 'U', 'D': 'D',
+};
 
 async function initHighlighter() {
   highlighter = await createHighlighterCore({
@@ -45,16 +97,111 @@ async function initHighlighter() {
   });
 }
 
-const preview = document.getElementById('preview')!;
-const statusDot = document.getElementById('statusDot')!;
-const statusText = document.getElementById('statusText')!;
+// ---- File Tree ----
 
-function connect() {
+async function loadTree() {
+  const resp = await fetch('/api/tree');
+  const tree: TreeEntry[] = await resp.json();
+  fileTree.innerHTML = '';
+  renderTree(tree, fileTree, 0);
+}
+
+function renderTree(entries: TreeEntry[], parent: HTMLElement, depth: number) {
+  for (const entry of entries) {
+    const item = document.createElement('div');
+    item.className = 'tree-item' + (entry.isDir ? ' tree-dir' : ' tree-file');
+    if (entry.status) item.classList.add('has-status');
+    item.style.paddingLeft = (12 + depth * 16) + 'px';
+    item.dataset.path = entry.path;
+
+    const statusBadge = entry.status
+      ? `<span class="tree-status" style="color:${STATUS_COLORS[entry.status] || ''}">${STATUS_LABELS[entry.status] || ''}</span>`
+      : '';
+
+    if (entry.isDir) {
+      // Auto-expand dirs with modified files, or first level
+      const hasChanges = !!entry.status;
+      const expanded = depth < 1 || hasChanges;
+      item.innerHTML = `<span class="tree-toggle">${expanded ? '\u25BE' : '\u25B8'}</span> <span class="tree-name">${entry.name}</span>${statusBadge}`;
+      parent.appendChild(item);
+
+      const children = document.createElement('div');
+      children.className = 'tree-children';
+      children.style.display = expanded ? 'block' : 'none';
+      parent.appendChild(children);
+
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isExpanded = children.style.display !== 'none';
+        children.style.display = isExpanded ? 'none' : 'block';
+        item.querySelector('.tree-toggle')!.textContent = isExpanded ? '\u25B8' : '\u25BE';
+      });
+
+      if (entry.children) {
+        renderTree(entry.children, children, depth + 1);
+      }
+    } else {
+      const nameColor = entry.status ? `style="color:${STATUS_COLORS[entry.status]}"` : '';
+      item.innerHTML = `<span class="tree-name" ${nameColor}>${entry.name}</span>${statusBadge}`;
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navigateTo(entry.path);
+      });
+      parent.appendChild(item);
+    }
+  }
+}
+
+// ---- Navigation ----
+
+function navigateTo(file: string) {
+  currentFile = file;
+
+  // Update URL without reload
+  const url = new URL(window.location.href);
+  url.searchParams.set('file', file);
+  history.pushState(null, '', url.toString());
+
+  // Update breadcrumb
+  updateBreadcrumb(file);
+
+  // Highlight active file in tree
+  document.querySelectorAll('.tree-file').forEach(el => {
+    el.classList.toggle('active', (el as HTMLElement).dataset.path === file);
+  });
+
+  // Load content
+  if (file.endsWith('.md')) {
+    connectWebSocket(file);
+  } else {
+    disconnectWebSocket();
+    loadRawFile(file);
+  }
+}
+
+function updateBreadcrumb(file: string) {
+  const parts = file.split('/');
+  let html = '<a href="/" class="breadcrumb-link">root</a>';
+  let path = '';
+  for (let i = 0; i < parts.length; i++) {
+    path += (i > 0 ? '/' : '') + parts[i];
+    const isLast = i === parts.length - 1;
+    if (isLast) {
+      html += ` / <span class="breadcrumb-current">${parts[i]}</span>`;
+    } else {
+      html += ` / <span class="breadcrumb-dir">${parts[i]}</span>`;
+    }
+  }
+  breadcrumb.innerHTML = html;
+}
+
+// ---- WebSocket (markdown files) ----
+
+function connectWebSocket(file: string) {
+  disconnectWebSocket();
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // Pass the ?file= param to the WebSocket so the server knows which file to watch
-  const fileParam = new URLSearchParams(location.search).get('file') || '';
-  const wsUrl = protocol + '//' + location.host + '/ws' + (fileParam ? '?file=' + encodeURIComponent(fileParam) : '');
-  const ws = new WebSocket(wsUrl);
+  const wsUrl = protocol + '//' + location.host + '/ws?file=' + encodeURIComponent(file);
+  ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
     statusDot.classList.remove('disconnected');
@@ -64,23 +211,83 @@ function connect() {
   ws.onclose = () => {
     statusDot.classList.add('disconnected');
     statusText.textContent = 'Disconnected';
-    setTimeout(connect, 2000);
   };
 
   ws.onmessage = (event) => {
-    preview.innerHTML = event.data;
-    enhance();
+    content.className = 'markdown-body';
+    content.innerHTML = event.data;
+    enhanceMarkdown();
   };
 }
 
-function enhance() {
+function disconnectWebSocket() {
+  if (ws) {
+    ws.onclose = null; // prevent reconnect
+    ws.close();
+    ws = null;
+  }
+}
+
+// ---- Raw file viewing ----
+
+async function loadRawFile(file: string) {
+  statusDot.classList.remove('disconnected');
+  statusText.textContent = 'Viewing';
+
+  try {
+    const resp = await fetch('/api/raw?file=' + encodeURIComponent(file));
+    if (!resp.ok) {
+      content.className = 'file-error';
+      content.textContent = resp.status === 415 ? 'Binary file (cannot preview)' : 'Failed to load file';
+      return;
+    }
+
+    const text = await resp.text();
+    const ext = file.split('.').pop()?.toLowerCase() || '';
+    const lang = LANG_MAP[ext] || LANG_MAP[file.split('/').pop()?.toLowerCase() || ''] || '';
+
+    content.className = 'code-view';
+    if (highlighter && lang && highlighter.getLoadedLanguages().includes(lang as any)) {
+      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      const theme = isDark ? 'github-dark' : 'github-light';
+      content.innerHTML = highlighter.codeToHtml(text, { lang, theme });
+    } else {
+      // Plain text with line numbers
+      content.innerHTML = '<pre><code>' + escapeHtml(text) + '</code></pre>';
+    }
+  } catch (e) {
+    content.className = 'file-error';
+    content.textContent = 'Failed to load file';
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ---- Markdown enhancement ----
+
+function enhanceMarkdown() {
   renderMath();
   renderAlerts();
   highlightCode();
+
+  // Intercept .md link clicks for in-app navigation
+  content.querySelectorAll('a[href]').forEach(a => {
+    const href = (a as HTMLAnchorElement).getAttribute('href') || '';
+    // Match /?file=... links (our rewritten relative .md links)
+    const match = href.match(/^\/\?file=(.+)$/);
+    if (match) {
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        navigateTo(decodeURIComponent(match[1]));
+      });
+    }
+  });
 }
 
 function renderMath() {
-  let html = preview.innerHTML;
+  let html = content.innerHTML;
 
   // Protect <code> and <pre> content from math replacement
   const protected_: string[] = [];
@@ -89,62 +296,43 @@ function renderMath() {
     return `\x00PROTECTED${protected_.length - 1}\x00`;
   });
 
-  // Block math ($$...$$)
-  html = html.replace(
-    /\$\$([\s\S]+?)\$\$/g,
-    (_, tex: string) => {
-      try {
-        return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
-      } catch {
-        return '$$' + tex + '$$';
-      }
-    }
-  );
+  html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex: string) => {
+    try { return katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false }); }
+    catch { return '$$' + tex + '$$'; }
+  });
 
-  // Inline math ($...$), avoiding $$
-  html = html.replace(
-    /(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g,
-    (_, tex: string) => {
-      try {
-        return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false });
-      } catch {
-        return '$' + tex + '$';
-      }
-    }
-  );
+  html = html.replace(/(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g, (_, tex: string) => {
+    try { return katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false }); }
+    catch { return '$' + tex + '$'; }
+  });
 
-  // Restore protected blocks
   html = html.replace(/\x00PROTECTED(\d+)\x00/g, (_, i) => protected_[parseInt(i)]);
-  preview.innerHTML = html;
+  content.innerHTML = html;
 }
 
-// GitHub-style alerts: > [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION]
-const ALERT_TYPES: Record<string, { icon: string; color: string; label: string }> = {
-  NOTE:      { icon: '\u2139\uFE0F', color: '#0969da', label: 'Note' },
-  TIP:       { icon: '\uD83D\uDCA1', color: '#1a7f37', label: 'Tip' },
-  IMPORTANT: { icon: '\u2757',       color: '#8250df', label: 'Important' },
-  WARNING:   { icon: '\u26A0\uFE0F', color: '#9a6700', label: 'Warning' },
-  CAUTION:   { icon: '\uD83D\uDED1', color: '#cf222e', label: 'Caution' },
+const ALERT_TYPES: Record<string, { color: string; label: string }> = {
+  NOTE:      { color: '#0969da', label: 'Note' },
+  TIP:       { color: '#1a7f37', label: 'Tip' },
+  IMPORTANT: { color: '#8250df', label: 'Important' },
+  WARNING:   { color: '#9a6700', label: 'Warning' },
+  CAUTION:   { color: '#cf222e', label: 'Caution' },
 };
 
 function renderAlerts() {
-  preview.querySelectorAll('blockquote').forEach((bq) => {
+  content.querySelectorAll('blockquote').forEach((bq) => {
     const firstP = bq.querySelector('p');
     if (!firstP) return;
     const text = firstP.innerHTML;
-    const match = text.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*<br\s*\/?>\s*/i)
-      || text.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*/i);
+    const match = text.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(?:<br\s*\/?>)?\s*/i);
     if (!match) return;
 
     const type = match[1].toUpperCase();
     const info = ALERT_TYPES[type];
     if (!info) return;
 
-    // Remove the alert marker from the text
     firstP.innerHTML = text.slice(match[0].length);
     if (!firstP.innerHTML.trim()) firstP.remove();
 
-    // Style the blockquote
     bq.style.borderLeftColor = info.color;
     bq.style.padding = '8px 16px';
     const title = document.createElement('p');
@@ -160,7 +348,7 @@ function highlightCode() {
   const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   const theme = isDark ? 'github-dark' : 'github-light';
 
-  preview.querySelectorAll('pre code').forEach((el) => {
+  content.querySelectorAll('pre code').forEach((el) => {
     const code = el as HTMLElement;
     const langClass = Array.from(code.classList).find(c => c.startsWith('language-'));
     const lang = langClass?.replace('language-', '') || '';
@@ -179,12 +367,37 @@ function highlightCode() {
   });
 }
 
-// Re-highlight when system theme changes
+// ---- Theme changes ----
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-  highlightCode();
+  // Re-render current content for new theme
+  if (currentFile.endsWith('.md')) {
+    highlightCode();
+  } else if (currentFile) {
+    loadRawFile(currentFile);
+  }
 });
 
-// Init
-initHighlighter().then(() => {
-  connect();
+// ---- Browser back/forward ----
+window.addEventListener('popstate', () => {
+  const file = new URLSearchParams(location.search).get('file') || '';
+  if (file) navigateTo(file);
 });
+
+// ---- Toggle sidebar ----
+(window as any).toggleSidebar = function() {
+  sidebar.classList.toggle('collapsed');
+};
+
+// ---- Init ----
+async function init() {
+  await initHighlighter();
+  await loadTree();
+
+  const fileParam = new URLSearchParams(location.search).get('file');
+  const startFile = fileParam || document.title; // title is set by Go template
+  if (startFile) {
+    navigateTo(startFile);
+  }
+}
+
+init();
