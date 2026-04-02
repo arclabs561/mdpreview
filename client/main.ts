@@ -180,11 +180,10 @@ function navigateTo(file: string) {
 }
 
 function updateBreadcrumb(file: string) {
+  const repoName = (window as any).__repoName || 'repo';
   const parts = file.split('/');
-  let html = '<a href="/" class="breadcrumb-link">root</a>';
-  let path = '';
+  let html = `<a href="/" class="breadcrumb-link">${repoName}</a>`;
   for (let i = 0; i < parts.length; i++) {
-    path += (i > 0 ? '/' : '') + parts[i];
     const isLast = i === parts.length - 1;
     if (isLast) {
       html += ` / <span class="breadcrumb-current">${parts[i]}</span>`;

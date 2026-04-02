@@ -373,7 +373,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	indexBuf := new(bytes.Buffer)
 	err := s.indexTemplate.Execute(indexBuf, map[string]any{
-		"path": file,
+		"path":    file,
+		"repoName": filepath.Base(s.rootDir),
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -403,9 +404,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.reader(ws)
 }
 
-// rewriteRelativeURLs rewrites relative src= and href= attributes to
-// point to the /files/ endpoint so images and links resolve correctly.
-var relURLRe = regexp.MustCompile(`((?:src|href)\s*=\s*")([^":/][^"]*)(")`)
+// relURLRe matches src= and href= attributes with any URL.
+var relURLRe = regexp.MustCompile(`((?:src|href)\s*=\s*")([^"]+)(")`)
 
 func (s *Server) render(absPath string) ([]byte, error) {
 	input, err := os.ReadFile(absPath)
@@ -425,18 +425,25 @@ func (s *Server) render(absPath string) ([]byte, error) {
 	html := relURLRe.ReplaceAllFunc(buf.Bytes(), func(match []byte) []byte {
 		parts := relURLRe.FindSubmatch(match)
 		href := string(parts[2])
-		attr := string(parts[1][:4]) // "src=" or "href"
 
-		// Skip anchors and absolute paths
-		if len(href) > 0 && href[0] == '#' {
+		// Skip absolute URLs (http://, https://, //, mailto:, etc.)
+		if strings.Contains(href, "://") || strings.HasPrefix(href, "//") || strings.HasPrefix(href, "mailto:") {
 			return match
 		}
-		if strings.HasPrefix(href, "static/") {
+		// Skip anchors
+		if strings.HasPrefix(href, "#") {
 			return match
 		}
+		// Skip our own static assets
+		if strings.HasPrefix(href, "/static/") || strings.HasPrefix(href, "static/") {
+			return match
+		}
+
+		// Determine if this is src= or href=
+		isSrc := strings.HasPrefix(string(parts[1]), "src")
 
 		// For .md links in href, make them navigate within the preview
-		if attr == "href" && strings.HasSuffix(href, ".md") {
+		if !isSrc && strings.HasSuffix(href, ".md") {
 			relPath := filepath.Join(fileDir, href)
 			return []byte(string(parts[1]) + "/?file=" + relPath + string(parts[3]))
 		}
