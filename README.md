@@ -20,6 +20,17 @@ mdpreview -debug README.md        # verbose logging
 ## Rendering
 
 - GFM via [goldmark](https://github.com/yuin/goldmark) (tables, task lists, strikethrough, autolinks)
-- Syntax highlighting via [chroma](https://github.com/alecthomas/chroma) (server-side, no client JS)
+- Syntax highlighting via [Shiki](https://shiki.style/) with `github-light` / `github-dark` themes (TextMate grammars, same as VS Code and GitHub)
 - Math via [KaTeX](https://katex.org/) (`$inline$` and `$$block$$`)
+- GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!CAUTION]`)
 - [GitHub Primer](https://primer.style/) CSS with system dark mode detection
+- Relative images and links resolve from the markdown file's directory
+
+## Development
+
+Rebuild the client bundle after editing `client/main.ts`:
+
+```sh
+make client   # requires bun or npm
+make build    # or just: make
+```
