@@ -5,7 +5,6 @@ import (
 	"context"
 	"embed"
 	"html/template"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,8 +13,12 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
-	"github.com/shurcooL/github_flavored_markdown"
 	"github.com/sirupsen/logrus"
+	"github.com/yuin/goldmark"
+	highlighting "github.com/yuin/goldmark-highlighting/v2"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer/html"
 )
 
 //go:embed static/*
@@ -30,11 +33,11 @@ type Server struct {
 	indexTemplate *template.Template
 	upgrader      websocket.Upgrader
 	log           *logrus.Logger
-	renderLocally bool
+	md            goldmark.Markdown
 }
 
 // New creates a new Server given some markdown path.
-func New(ctx context.Context, path string, log *logrus.Logger, renderLocally bool) (*Server, error) {
+func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) {
 	indexData, err := staticFiles.ReadFile("static/index.html")
 	if err != nil {
 		return nil, err
@@ -45,21 +48,35 @@ func New(ctx context.Context, path string, log *logrus.Logger, renderLocally boo
 		return nil, err
 	}
 
+	md := goldmark.New(
+		goldmark.WithExtensions(
+			extension.GFM,
+			highlighting.NewHighlighting(
+				highlighting.WithStyle("github"),
+			),
+		),
+		goldmark.WithParserOptions(
+			parser.WithAutoHeadingID(),
+		),
+		goldmark.WithRendererOptions(
+			html.WithUnsafe(),
+		),
+	)
+
 	return &Server{
 		ctx:           ctx,
 		path:          path,
 		log:           log,
 		indexTemplate: indexTemplate,
+		md:            md,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
-				// Only allow same-origin connections for security
 				origin := r.Header.Get("Origin")
 				return origin == "" || origin == "http://"+r.Host
 			},
 		},
-		renderLocally: renderLocally,
 	}, nil
 }
 
@@ -74,28 +91,15 @@ func (s *Server) setupHandlers() http.Handler {
 	r := mux.NewRouter()
 	r.HandleFunc("/", s.handleIndex).Methods("GET")
 	r.HandleFunc("/ws", s.handleWebSocket).Methods("GET")
-	r.HandleFunc("/content", s.handleGetContent).Methods("GET")
 	r.PathPrefix("/").Handler(staticFileHandler).Methods("GET")
 
 	return r
 }
 
-func (s *Server) handleGetContent(w http.ResponseWriter, r *http.Request) {
-	content, err := os.ReadFile(s.path)
-	if err != nil {
-		s.log.WithError(err).Error("failed to read file")
-		http.Error(w, "Failed to read file", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(content)
-}
-
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	indexBuf := new(bytes.Buffer)
-	err := s.indexTemplate.Execute(indexBuf, map[string]interface{}{
+	err := s.indexTemplate.Execute(indexBuf, map[string]any{
 		"path": filepath.Base(s.path),
 	})
 	if err != nil {
@@ -124,25 +128,11 @@ func (s *Server) render() ([]byte, error) {
 		return nil, err
 	}
 
-	if s.renderLocally {
-		return github_flavored_markdown.Markdown(input), nil
-	}
-
-	// Use GitHub API for rendering
-	req, err := http.NewRequestWithContext(s.ctx, "POST", "https://api.github.com/markdown/raw", bytes.NewReader(input))
-	if err != nil {
+	var buf bytes.Buffer
+	if err := s.md.Convert(input, &buf); err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "text/plain")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	return io.ReadAll(resp.Body)
+	return buf.Bytes(), nil
 }
 
 func (s *Server) watcher(changes chan<- struct{}) {
@@ -177,8 +167,6 @@ func (s *Server) watcher(changes chan<- struct{}) {
 
 			switch event.Op {
 			case fsnotify.Remove, fsnotify.Rename:
-				// File was removed or renamed - try to re-add it after a delay
-				// This handles editor save patterns (write to temp, rename)
 				go func() {
 					time.Sleep(100 * time.Millisecond)
 					if err := w.Add(s.path); err != nil {
@@ -205,7 +193,7 @@ func (s *Server) writer(ws *websocket.Conn) {
 	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
 
-	changes := make(chan struct{}, 1) // Buffered to prevent blocking watcher
+	changes := make(chan struct{}, 1)
 	go s.watcher(changes)
 
 	for {

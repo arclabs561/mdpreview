@@ -21,7 +21,6 @@ import (
 
 var (
 	addr  = flag.String("addr", ":8080", "address to serve preview like :8080 or 0.0.0.0:7000")
-	api   = flag.Bool("api", false, "whether to render via the Github API")
 	debug = flag.Bool("debug", false, "debug logging")
 )
 
@@ -51,7 +50,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s, err := server.New(ctx, path, log, !*api)
+	s, err := server.New(ctx, path, log)
 	if err != nil {
 		log.Fatal(err)
 	}
