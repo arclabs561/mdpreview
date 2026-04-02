@@ -51,7 +51,10 @@ const statusText = document.getElementById('statusText')!;
 
 function connect() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(protocol + '//' + location.host + '/ws');
+  // Pass the ?file= param to the WebSocket so the server knows which file to watch
+  const fileParam = new URLSearchParams(location.search).get('file') || '';
+  const wsUrl = protocol + '//' + location.host + '/ws' + (fileParam ? '?file=' + encodeURIComponent(fileParam) : '');
+  const ws = new WebSocket(wsUrl);
 
   ws.onopen = () => {
     statusDot.classList.remove('disconnected');

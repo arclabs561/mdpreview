@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -24,19 +25,19 @@ import (
 //go:embed static/*
 var staticFiles embed.FS
 
-// Server serves a HTML rendered Markdown preview of a Markdown file specified
-// at path. Whenever the path is written to, the rendering will update
-// dynamically.
+// Server serves a HTML rendered Markdown preview. It can serve a single file
+// or a directory (with file selection via ?file= query parameter).
 type Server struct {
 	ctx           context.Context
-	path          string
+	rootDir       string // directory containing the markdown file(s)
+	defaultFile   string // relative path to default file within rootDir
 	indexTemplate *template.Template
 	upgrader      websocket.Upgrader
 	log           *logrus.Logger
 	md            goldmark.Markdown
 }
 
-// New creates a new Server given some markdown path.
+// New creates a new Server. path can be a file or directory.
 func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) {
 	indexData, err := staticFiles.ReadFile("static/index.html")
 	if err != nil {
@@ -54,9 +55,29 @@ func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) 
 		goldmark.WithRendererOptions(html.WithUnsafe()),
 	)
 
+	// Determine rootDir and defaultFile
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var rootDir, defaultFile string
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		rootDir = absPath
+		defaultFile = findReadme(absPath)
+	} else {
+		rootDir = filepath.Dir(absPath)
+		defaultFile, _ = filepath.Rel(rootDir, absPath)
+	}
+
 	return &Server{
 		ctx:           ctx,
-		path:          path,
+		rootDir:       rootDir,
+		defaultFile:   defaultFile,
 		log:           log,
 		indexTemplate: indexTemplate,
 		md:            md,
@@ -71,6 +92,31 @@ func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) 
 	}, nil
 }
 
+func findReadme(dir string) string {
+	for _, name := range []string{"README.md", "readme.md", "Readme.md"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return name
+		}
+	}
+	return ""
+}
+
+// resolveFile returns the absolute path for a file query, ensuring it's
+// within rootDir (path traversal protection).
+func (s *Server) resolveFile(file string) (string, error) {
+	if file == "" {
+		file = s.defaultFile
+	}
+	// Clean and resolve
+	clean := filepath.Clean(file)
+	abs := filepath.Join(s.rootDir, clean)
+	// Ensure it's within rootDir
+	if !strings.HasPrefix(abs, s.rootDir) {
+		return "", os.ErrPermission
+	}
+	return abs, nil
+}
+
 // Run returns handlers to run the server.
 func (s *Server) Run() (http.Handler, error) {
 	return s.setupHandlers(), nil
@@ -78,10 +124,7 @@ func (s *Server) Run() (http.Handler, error) {
 
 func (s *Server) setupHandlers() http.Handler {
 	staticFileHandler := http.FileServer(http.FS(staticFiles))
-
-	// Serve files from the markdown file's directory for relative paths
-	mdDir := filepath.Dir(s.path)
-	localFileHandler := http.StripPrefix("/files/", http.FileServer(http.Dir(mdDir)))
+	localFileHandler := http.StripPrefix("/files/", http.FileServer(http.Dir(s.rootDir)))
 
 	r := mux.NewRouter()
 	r.HandleFunc("/", s.handleIndex).Methods("GET")
@@ -93,10 +136,15 @@ func (s *Server) setupHandlers() http.Handler {
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	if file == "" {
+		file = s.defaultFile
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	indexBuf := new(bytes.Buffer)
 	err := s.indexTemplate.Execute(indexBuf, map[string]any{
-		"path": filepath.Base(s.path),
+		"path": file,
 	})
 	if err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
@@ -114,7 +162,15 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.writer(ws)
+	file := r.URL.Query().Get("file")
+	absPath, err := s.resolveFile(file)
+	if err != nil {
+		s.log.WithError(err).Error("invalid file path")
+		ws.Close()
+		return
+	}
+
+	go s.writer(ws, absPath)
 	s.reader(ws)
 }
 
@@ -122,8 +178,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // point to the /files/ endpoint so images and links resolve correctly.
 var relURLRe = regexp.MustCompile(`((?:src|href)\s*=\s*")([^":/][^"]*)(")`)
 
-func (s *Server) render() ([]byte, error) {
-	input, err := os.ReadFile(s.path)
+func (s *Server) render(absPath string) ([]byte, error) {
+	input, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, err
 	}
@@ -133,24 +189,38 @@ func (s *Server) render() ([]byte, error) {
 		return nil, err
 	}
 
-	// Rewrite relative URLs to serve from /files/
+	// Directory containing this file, relative to rootDir
+	fileDir, _ := filepath.Rel(s.rootDir, filepath.Dir(absPath))
+
+	// Rewrite relative URLs
 	html := relURLRe.ReplaceAllFunc(buf.Bytes(), func(match []byte) []byte {
 		parts := relURLRe.FindSubmatch(match)
-		path := string(parts[2])
-		// Skip static/ paths (our own assets) and anchors
-		if len(path) > 0 && path[0] == '#' {
+		href := string(parts[2])
+		attr := string(parts[1][:4]) // "src=" or "href"
+
+		// Skip anchors and absolute paths
+		if len(href) > 0 && href[0] == '#' {
 			return match
 		}
-		if len(path) > 7 && path[:7] == "static/" {
+		if strings.HasPrefix(href, "static/") {
 			return match
 		}
-		return append(parts[1], append([]byte("/files/"+path), parts[3]...)...)
+
+		// For .md links in href, make them navigate within the preview
+		if attr == "href" && strings.HasSuffix(href, ".md") {
+			relPath := filepath.Join(fileDir, href)
+			return []byte(string(parts[1]) + "/?file=" + relPath + string(parts[3]))
+		}
+
+		// For images and other files, serve from /files/
+		relPath := filepath.Join(fileDir, href)
+		return []byte(string(parts[1]) + "/files/" + relPath + string(parts[3]))
 	})
 
 	return html, nil
 }
 
-func (s *Server) watcher(changes chan<- struct{}) {
+func (s *Server) watcher(changes chan<- struct{}, absPath string) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		s.log.WithError(err).Error("failed to create file watcher")
@@ -158,8 +228,7 @@ func (s *Server) watcher(changes chan<- struct{}) {
 	}
 	defer w.Close()
 
-	err = w.Add(s.path)
-	if err != nil {
+	if err := w.Add(absPath); err != nil {
 		s.log.WithError(err).Error("failed to watch file")
 		return
 	}
@@ -184,7 +253,7 @@ func (s *Server) watcher(changes chan<- struct{}) {
 			case fsnotify.Remove, fsnotify.Rename:
 				go func() {
 					time.Sleep(100 * time.Millisecond)
-					if err := w.Add(s.path); err != nil {
+					if err := w.Add(absPath); err != nil {
 						s.log.WithError(err).Debug("failed to re-add watch")
 					}
 				}()
@@ -201,7 +270,7 @@ func (s *Server) watcher(changes chan<- struct{}) {
 	}
 }
 
-func (s *Server) writer(ws *websocket.Conn) {
+func (s *Server) writer(ws *websocket.Conn, absPath string) {
 	defer ws.Close()
 
 	pingInterval := 2 * time.Second
@@ -209,7 +278,7 @@ func (s *Server) writer(ws *websocket.Conn) {
 	defer pingTicker.Stop()
 
 	changes := make(chan struct{}, 1)
-	go s.watcher(changes)
+	go s.watcher(changes, absPath)
 
 	for {
 		select {
@@ -217,7 +286,7 @@ func (s *Server) writer(ws *websocket.Conn) {
 			s.log.Debug("writer shutting down")
 			return
 		case <-changes:
-			rendered, err := s.render()
+			rendered, err := s.render(absPath)
 			if err != nil {
 				s.log.WithError(err).Error("failed to render markdown")
 				continue

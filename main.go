@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -39,29 +38,6 @@ func main() {
 		log.Fatal("usage: mdpreview <file.md | directory>")
 	}
 	path := args[0]
-
-	// If given a directory, look for README.md
-	info, err := os.Stat(path)
-	if err != nil {
-		log.Fatalf("path %s: %v", path, err)
-	}
-	if info.IsDir() {
-		candidates := []string{"README.md", "readme.md", "Readme.md"}
-		found := false
-		for _, c := range candidates {
-			p := filepath.Join(path, c)
-			if _, err := os.Stat(p); err == nil {
-				path = p
-				found = true
-				break
-			}
-		}
-		if !found {
-			log.Fatalf("no README.md found in %s", path)
-		}
-	} else if filepath.Ext(path) != ".md" {
-		log.Warnf("path %s doesn't look like a Markdown file", path)
-	}
 
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
