@@ -56,12 +56,11 @@ func main() {
 		*addr = fmt.Sprintf("127.0.0.1%s", *addr)
 	}
 
-	// Setup HTTP server with timeouts
 	srv := &http.Server{
-		Addr:         *addr,
-		Handler:      createHandler(h, log),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Addr:        *addr,
+		Handler:     createHandler(h, log),
+		ReadTimeout: 15 * time.Second,
+		// No WriteTimeout: WebSocket connections are long-lived
 		IdleTimeout:  60 * time.Second,
 	}
 

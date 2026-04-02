@@ -242,22 +242,60 @@ async function loadRawFile(file: string) {
     }
 
     const text = await resp.text();
+    const lines = text.split('\n');
+    const lineCount = lines.length;
+    const size = formatSize(new Blob([text]).size);
     const ext = file.split('.').pop()?.toLowerCase() || '';
     const lang = LANG_MAP[ext] || LANG_MAP[file.split('/').pop()?.toLowerCase() || ''] || '';
+    const langLabel = lang || 'Plain Text';
 
     content.className = 'code-view';
+
+    // File header
+    const header = `<div class="file-header">
+      <span class="file-header-info">${lineCount} lines | ${size} | ${langLabel}</span>
+    </div>`;
+
+    let codeHtml: string;
     if (highlighter && lang && highlighter.getLoadedLanguages().includes(lang as any)) {
       const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       const theme = isDark ? 'github-dark' : 'github-light';
-      content.innerHTML = highlighter.codeToHtml(text, { lang, theme });
+      codeHtml = highlighter.codeToHtml(text, { lang, theme });
     } else {
-      // Plain text with line numbers
-      content.innerHTML = '<pre><code>' + escapeHtml(text) + '</code></pre>';
+      codeHtml = '<pre><code>' + escapeHtml(text) + '</code></pre>';
     }
+
+    content.innerHTML = header + '<div class="code-body">' + codeHtml + '</div>';
+
+    // Add line numbers
+    addLineNumbers();
   } catch (e) {
     content.className = 'file-error';
     content.textContent = 'Failed to load file';
   }
+}
+
+function addLineNumbers() {
+  const pre = content.querySelector('pre');
+  if (!pre) return;
+  const code = pre.querySelector('code') || pre;
+  const lines = code.innerHTML.split('\n');
+  // Don't count trailing empty line
+  const count = lines.length > 0 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+
+  const gutter = document.createElement('div');
+  gutter.className = 'line-numbers';
+  for (let i = 1; i <= count; i++) {
+    gutter.innerHTML += `<span>${i}</span>\n`;
+  }
+  pre.style.display = 'flex';
+  pre.insertBefore(gutter, pre.firstChild);
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
 function escapeHtml(s: string): string {
@@ -387,16 +425,36 @@ window.addEventListener('popstate', () => {
   sidebar.classList.toggle('collapsed');
 };
 
+// ---- Tree auto-refresh ----
+let treeRefreshTimer: ReturnType<typeof setInterval>;
+function startTreeRefresh() {
+  treeRefreshTimer = setInterval(async () => {
+    // Silently reload tree to pick up git status changes
+    try {
+      const resp = await fetch('/api/tree');
+      const tree: TreeEntry[] = await resp.json();
+      fileTree.innerHTML = '';
+      renderTree(tree, fileTree, 0);
+      // Re-mark active file
+      document.querySelectorAll('.tree-file').forEach(el => {
+        el.classList.toggle('active', (el as HTMLElement).dataset.path === currentFile);
+      });
+    } catch {}
+  }, 3000);
+}
+
 // ---- Init ----
 async function init() {
   await initHighlighter();
   await loadTree();
 
   const fileParam = new URLSearchParams(location.search).get('file');
-  const startFile = fileParam || document.title; // title is set by Go template
+  const startFile = fileParam || document.title;
   if (startFile) {
     navigateTo(startFile);
   }
+
+  startTreeRefresh();
 }
 
 init();
