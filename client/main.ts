@@ -77,8 +77,17 @@ function enhance() {
 }
 
 function renderMath() {
+  let html = preview.innerHTML;
+
+  // Protect <code> and <pre> content from math replacement
+  const protected_: string[] = [];
+  html = html.replace(/<(code|pre)[^>]*>[\s\S]*?<\/\1>/gi, (match) => {
+    protected_.push(match);
+    return `\x00PROTECTED${protected_.length - 1}\x00`;
+  });
+
   // Block math ($$...$$)
-  preview.innerHTML = preview.innerHTML.replace(
+  html = html.replace(
     /\$\$([\s\S]+?)\$\$/g,
     (_, tex: string) => {
       try {
@@ -90,7 +99,7 @@ function renderMath() {
   );
 
   // Inline math ($...$), avoiding $$
-  preview.innerHTML = preview.innerHTML.replace(
+  html = html.replace(
     /(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)/g,
     (_, tex: string) => {
       try {
@@ -100,6 +109,10 @@ function renderMath() {
       }
     }
   );
+
+  // Restore protected blocks
+  html = html.replace(/\x00PROTECTED(\d+)\x00/g, (_, i) => protected_[parseInt(i)]);
+  preview.innerHTML = html;
 }
 
 // GitHub-style alerts: > [!NOTE], > [!TIP], > [!IMPORTANT], > [!WARNING], > [!CAUTION]
