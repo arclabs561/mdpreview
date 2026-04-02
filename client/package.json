@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild main.ts --bundle --minify --outfile=../server/static/bundle.js --format=esm --target=es2020"
+    "build": "node build.mjs"
   },
   "dependencies": {
+    "github-markdown-css": "^5.9.0",
     "katex": "^0.16.9",
     "shiki": "^3.9.1"
   },
