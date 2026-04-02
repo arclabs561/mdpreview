@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"encoding/json"
 	"html/template"
 	"io"
 	"net/http"
@@ -243,81 +242,29 @@ func (s *Server) writer(ws *websocket.Conn) {
 
 func (s *Server) reader(ws *websocket.Conn) {
 	defer ws.Close()
-	
-	ws.SetReadLimit(5 * 1024 * 1024) // 5MB limit for file content
-	
+
+	ws.SetReadLimit(512)
+
 	if err := ws.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
 		s.log.WithError(err).Error("failed to set read deadline")
 		return
 	}
-	
+
 	ws.SetPongHandler(func(string) error {
 		return ws.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
-	
-	// Send initial content
-	content, err := os.ReadFile(s.path)
-	if err == nil {
-		msg := map[string]string{
-			"type":    "content",
-			"content": string(content),
-		}
-		if data, err := json.Marshal(msg); err == nil {
-			if err := ws.WriteMessage(websocket.TextMessage, data); err != nil {
-				s.log.WithError(err).Error("failed to send initial content")
-			}
-		}
-	}
-	
+
 	for {
 		select {
 		case <-s.ctx.Done():
-			s.log.Debug("reader shutting down")
 			return
 		default:
-			_, message, err := ws.ReadMessage()
-			if err != nil {
+			if _, _, err := ws.ReadMessage(); err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					s.log.WithError(err).Warn("unexpected websocket close")
 				}
 				return
 			}
-			
-			// Parse message as JSON
-			var msg map[string]string
-			if err := json.Unmarshal(message, &msg); err != nil {
-				s.log.WithError(err).Debug("failed to parse message")
-				continue
-			}
-			
-			// Handle different message types
-			switch msg["type"] {
-			case "save":
-				if err := s.saveContent(msg["content"]); err != nil {
-					s.log.WithError(err).Error("failed to save file")
-					// Send error back to client
-					response := map[string]string{
-						"type":  "error",
-						"error": "Failed to save file",
-					}
-					if data, err := json.Marshal(response); err == nil {
-						ws.WriteMessage(websocket.TextMessage, data)
-					}
-				} else {
-					s.log.Info("file saved successfully")
-				}
-			}
 		}
 	}
-}
-
-func (s *Server) saveContent(content string) error {
-	// Write to a temporary file first, then rename (atomic operation)
-	tmpFile := s.path + ".tmp"
-	
-	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
-		return err
-	}
-	
-	return os.Rename(tmpFile, s.path)
 }
