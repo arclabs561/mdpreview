@@ -1,11 +1,11 @@
-.PHONY: all build install test clean css
+.PHONY: all build install test clean client
 
-all: build
+all: client build
 
 build:
 	go build -o mdpreview .
 
-install:
+install: client
 	go install .
 
 test:
@@ -13,20 +13,10 @@ test:
 
 clean:
 	rm -f mdpreview
+	rm -f server/static/bundle.js
 	go clean
 
-# Update GitHub CSS styling
-css:
-	@command -v generate-github-markdown-css >/dev/null 2>&1 || npm install --global generate-github-markdown-css
-	generate-github-markdown-css > server/static/github.css
-	@command -v minify >/dev/null 2>&1 || go install github.com/tdewolff/minify/v2/cmd/minify@latest
-	minify -o server/static/github.css server/static/github.css
-
-# Run linters and formatters
-lint:
-	go fmt ./...
-	go vet ./...
-	@command -v staticcheck >/dev/null 2>&1 || go install honnef.co/go/tools/cmd/staticcheck@latest
-	staticcheck ./...
-	@command -v golangci-lint >/dev/null 2>&1 || go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	golangci-lint run
+# Build the client JS bundle (requires bun or npm in client/)
+client:
+	cd client && bun install --frozen-lockfile 2>/dev/null || cd client && npm ci
+	cd client && bun run build

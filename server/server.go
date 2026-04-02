@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -15,7 +16,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"github.com/yuin/goldmark"
-	highlighting "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
@@ -49,18 +49,9 @@ func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) 
 	}
 
 	md := goldmark.New(
-		goldmark.WithExtensions(
-			extension.GFM,
-			highlighting.NewHighlighting(
-				highlighting.WithStyle("github"),
-			),
-		),
-		goldmark.WithParserOptions(
-			parser.WithAutoHeadingID(),
-		),
-		goldmark.WithRendererOptions(
-			html.WithUnsafe(),
-		),
+		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
+		goldmark.WithRendererOptions(html.WithUnsafe()),
 	)
 
 	return &Server{
@@ -88,9 +79,14 @@ func (s *Server) Run() (http.Handler, error) {
 func (s *Server) setupHandlers() http.Handler {
 	staticFileHandler := http.FileServer(http.FS(staticFiles))
 
+	// Serve files from the markdown file's directory for relative paths
+	mdDir := filepath.Dir(s.path)
+	localFileHandler := http.StripPrefix("/files/", http.FileServer(http.Dir(mdDir)))
+
 	r := mux.NewRouter()
 	r.HandleFunc("/", s.handleIndex).Methods("GET")
 	r.HandleFunc("/ws", s.handleWebSocket).Methods("GET")
+	r.PathPrefix("/files/").Handler(localFileHandler).Methods("GET")
 	r.PathPrefix("/").Handler(staticFileHandler).Methods("GET")
 
 	return r
@@ -122,6 +118,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.reader(ws)
 }
 
+// rewriteRelativeURLs rewrites relative src= and href= attributes to
+// point to the /files/ endpoint so images and links resolve correctly.
+var relURLRe = regexp.MustCompile(`((?:src|href)\s*=\s*")([^":/][^"]*)(")`)
+
 func (s *Server) render() ([]byte, error) {
 	input, err := os.ReadFile(s.path)
 	if err != nil {
@@ -132,7 +132,22 @@ func (s *Server) render() ([]byte, error) {
 	if err := s.md.Convert(input, &buf); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+
+	// Rewrite relative URLs to serve from /files/
+	html := relURLRe.ReplaceAllFunc(buf.Bytes(), func(match []byte) []byte {
+		parts := relURLRe.FindSubmatch(match)
+		path := string(parts[2])
+		// Skip static/ paths (our own assets) and anchors
+		if len(path) > 0 && path[0] == '#' {
+			return match
+		}
+		if len(path) > 7 && path[:7] == "static/" {
+			return match
+		}
+		return append(parts[1], append([]byte("/files/"+path), parts[3]...)...)
+	})
+
+	return html, nil
 }
 
 func (s *Server) watcher(changes chan<- struct{}) {

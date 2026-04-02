@@ -25,6 +25,8 @@
         @media (max-width: 767px) {
             .markdown-body { padding: 15px; }
         }
+        /* Shiki code blocks already have their own background */
+        .markdown-body .shiki { padding: 16px; border-radius: 6px; overflow-x: auto; }
         .status-bar {
             position: fixed;
             bottom: 12px;
@@ -63,8 +65,6 @@
         <span id="statusDot" class="status-dot"></span>
         <span id="statusText">Connecting...</span>
     </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-    <script src="/static/preview.js"></script>
+    <script type="module" src="/static/bundle.js"></script>
 </body>
 </html>

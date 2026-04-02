@@ -1,0 +1,15 @@
+{
+  "name": "mdpreview-client",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild main.ts --bundle --minify --outfile=../server/static/bundle.js --format=esm --target=es2020"
+  },
+  "dependencies": {
+    "katex": "^0.16.9",
+    "shiki": "^3.9.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

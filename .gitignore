@@ -35,6 +35,9 @@ Thumbs.db
 .env.*
 *.log
 build/
+# Client build artifacts
+client/node_modules/
+
 # Test artifacts
 *.png
 .playwright-mcp/
