@@ -65,6 +65,7 @@ const breadcrumb = document.getElementById('breadcrumb')!;
 const content = document.getElementById('content')!;
 const statusDot = document.getElementById('statusDot')!;
 const statusText = document.getElementById('statusText')!;
+const lastUpdated = document.getElementById('lastUpdated')!;
 
 interface TreeEntry {
   name: string;
@@ -171,6 +172,7 @@ function navigateTo(file: string) {
   });
 
   // Load content
+  fetchModTime(file);
   if (file.endsWith('.md')) {
     connectWebSocket(file);
   } else {
@@ -192,6 +194,36 @@ function updateBreadcrumb(file: string) {
     }
   }
   breadcrumb.innerHTML = html;
+}
+
+// ---- File metadata ----
+
+async function fetchModTime(file: string) {
+  try {
+    const resp = await fetch('/api/meta?file=' + encodeURIComponent(file));
+    if (!resp.ok) return;
+    const data = await resp.json();
+    if (data.modTime) {
+      const date = new Date(data.modTime * 1000);
+      lastUpdated.textContent = 'Updated ' + formatRelativeTime(date);
+      lastUpdated.title = date.toLocaleString();
+    }
+  } catch {}
+}
+
+function formatRelativeTime(date: Date): string {
+  const now = Date.now();
+  const diffMs = now - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 5) return 'just now';
+  if (diffSec < 60) return diffSec + 's ago';
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return diffMin + 'm ago';
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr < 24) return diffHr + 'h ago';
+  const diffDay = Math.floor(diffHr / 24);
+  if (diffDay < 30) return diffDay + 'd ago';
+  return date.toLocaleDateString();
 }
 
 // ---- WebSocket (markdown files) ----
@@ -216,6 +248,7 @@ function connectWebSocket(file: string) {
     content.className = 'markdown-body';
     content.innerHTML = event.data;
     enhanceMarkdown();
+    fetchModTime(file);
   };
 }
 
@@ -305,14 +338,16 @@ function escapeHtml(s: string): string {
 // ---- Markdown enhancement ----
 
 function enhanceMarkdown() {
-  renderMath();
+  renderMathBlocks(); // ```math code blocks -> KaTeX
+  renderMath();       // $...$ and $$...$$ inline/block
   renderAlerts();
   highlightCode();
+  renderMermaid();
+  buildTOC();
 
   // Intercept .md link clicks for in-app navigation
   content.querySelectorAll('a[href]').forEach(a => {
     const href = (a as HTMLAnchorElement).getAttribute('href') || '';
-    // Match /?file=... links (our rewritten relative .md links)
     const match = href.match(/^\/\?file=(.+)$/);
     if (match) {
       a.addEventListener('click', (e) => {
@@ -321,6 +356,101 @@ function enhanceMarkdown() {
       });
     }
   });
+
+  // Image lightbox
+  content.querySelectorAll('img').forEach(img => {
+    (img as HTMLElement).style.cursor = 'pointer';
+    img.addEventListener('click', () => {
+      const overlay = document.createElement('div');
+      overlay.className = 'lightbox';
+      overlay.innerHTML = `<img src="${(img as HTMLImageElement).src}">`;
+      overlay.addEventListener('click', () => overlay.remove());
+      document.body.appendChild(overlay);
+    });
+  });
+}
+
+// ```math blocks -> KaTeX display math
+function renderMathBlocks() {
+  content.querySelectorAll('code.language-math').forEach(code => {
+    const pre = code.parentElement;
+    if (!pre || pre.tagName !== 'PRE') return;
+    const tex = code.textContent || '';
+    try {
+      pre.outerHTML = katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false });
+    } catch {}
+  });
+}
+
+// Mermaid diagrams (lazy-loaded)
+let mermaidLoaded = false;
+async function renderMermaid() {
+  const blocks = content.querySelectorAll('code.language-mermaid');
+  if (blocks.length === 0) return;
+
+  if (!mermaidLoaded) {
+    const { default: mermaid } = await import('mermaid');
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: isDark ? 'dark' : 'default',
+    });
+    mermaidLoaded = true;
+  }
+
+  const { default: mermaid } = await import('mermaid');
+  let i = 0;
+  for (const code of blocks) {
+    const pre = code.parentElement;
+    if (!pre || pre.tagName !== 'PRE') continue;
+    const source = code.textContent || '';
+    try {
+      const { svg } = await mermaid.render(`mermaid-${i++}`, source);
+      const div = document.createElement('div');
+      div.className = 'mermaid-diagram';
+      div.innerHTML = svg;
+      pre.replaceWith(div);
+    } catch (e) {
+      // Leave the code block as-is on parse error
+    }
+  }
+}
+
+// On-this-page TOC with scroll spy
+function buildTOC() {
+  const tocEl = document.getElementById('toc');
+  if (!tocEl) return;
+
+  const headings = content.querySelectorAll('h1, h2, h3');
+  if (headings.length < 2) {
+    tocEl.innerHTML = '';
+    return;
+  }
+
+  let html = '<div class="toc-title">On this page</div><ul class="toc-list">';
+  headings.forEach((h, i) => {
+    const level = parseInt(h.tagName[1]);
+    const id = h.id || `heading-${i}`;
+    if (!h.id) h.id = id;
+    const indent = (level - 1) * 12;
+    html += `<li style="padding-left:${indent}px"><a href="#${id}" class="toc-link">${h.textContent}</a></li>`;
+  });
+  html += '</ul>';
+  tocEl.innerHTML = html;
+
+  // Scroll spy
+  const links = tocEl.querySelectorAll('.toc-link');
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        links.forEach(l => l.classList.remove('toc-active'));
+        const link = tocEl.querySelector(`a[href="#${entry.target.id}"]`);
+        if (link) link.classList.add('toc-active');
+      }
+    }
+  }, { rootMargin: '-20% 0px -80% 0px' });
+
+  headings.forEach(h => observer.observe(h));
 }
 
 function renderMath() {

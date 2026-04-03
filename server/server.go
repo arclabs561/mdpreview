@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 	"github.com/yuin/goldmark"
+	emoji "github.com/yuin/goldmark-emoji"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/renderer/html"
@@ -53,7 +54,7 @@ func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) 
 	}
 
 	md := goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithExtensions(extension.GFM, extension.Footnote, emoji.Emoji),
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 		goldmark.WithRendererOptions(html.WithUnsafe()),
 	)
@@ -132,6 +133,7 @@ func (s *Server) setupHandlers() http.Handler {
 	r := mux.NewRouter()
 	r.HandleFunc("/", s.handleIndex).Methods("GET")
 	r.HandleFunc("/api/tree", s.handleTree).Methods("GET")
+	r.HandleFunc("/api/meta", s.handleMeta).Methods("GET")
 	r.HandleFunc("/api/raw", s.handleRaw).Methods("GET")
 	r.HandleFunc("/ws", s.handleWebSocket).Methods("GET")
 	r.PathPrefix("/files/").Handler(localFileHandler).Methods("GET")
@@ -316,6 +318,24 @@ func buildTreeFromPaths(files []string, statusMap map[string]string) []TreeEntry
 	}
 
 	return convert(root)
+}
+
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	absPath, err := s.resolveFile(file)
+	if err != nil {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"modTime": info.ModTime().Unix(),
+	})
 }
 
 func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {

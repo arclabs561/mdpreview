@@ -10,6 +10,7 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/urfave/negroni v1.0.0
 	github.com/yuin/goldmark v1.8.2
+	github.com/yuin/goldmark-emoji v1.0.6
 )
 
 require (
