@@ -383,7 +383,6 @@ func isBinary(data []byte) bool {
 	return false
 }
 
-
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	file := r.URL.Query().Get("file")
 	if file == "" {
@@ -393,7 +392,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	indexBuf := new(bytes.Buffer)
 	err := s.indexTemplate.Execute(indexBuf, map[string]any{
-		"path":    file,
+		"path":     file,
 		"repoName": filepath.Base(s.rootDir),
 	})
 	if err != nil {

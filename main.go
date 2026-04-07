@@ -61,7 +61,7 @@ func main() {
 		Handler:     createHandler(h, log),
 		ReadTimeout: 15 * time.Second,
 		// No WriteTimeout: WebSocket connections are long-lived
-		IdleTimeout:  60 * time.Second,
+		IdleTimeout: 60 * time.Second,
 	}
 
 	// Start server and open browser
