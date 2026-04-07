@@ -5,7 +5,7 @@ Markdown preview server with live reload.
 ## Usage
 
 ```sh
-go install github.com/henrywallace/mdpreview@latest
+go install github.com/arclabs561/mdpreview@latest
 mdpreview README.md
 ```
 
