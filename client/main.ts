@@ -245,9 +245,14 @@ function connectWebSocket(file: string) {
   };
 
   ws.onmessage = (event) => {
+    const wrapper = content.closest('.content-wrapper');
+    const scrollTop = wrapper ? wrapper.scrollTop : 0;
     content.className = 'markdown-body';
     content.innerHTML = event.data;
     enhanceMarkdown();
+    if (wrapper) {
+      requestAnimationFrame(() => { wrapper.scrollTop = scrollTop; });
+    }
     fetchModTime(file);
   };
 }
@@ -557,20 +562,51 @@ window.addEventListener('popstate', () => {
 
 // ---- Tree auto-refresh ----
 let treeRefreshTimer: ReturnType<typeof setInterval>;
+let lastTreeJSON = '';
+
+function getExpandedPaths(): Set<string> {
+  const expanded = new Set<string>();
+  fileTree.querySelectorAll('.tree-dir').forEach(dir => {
+    const children = dir.nextElementSibling as HTMLElement;
+    if (children?.style.display !== 'none') {
+      expanded.add((dir as HTMLElement).dataset.path!);
+    }
+  });
+  return expanded;
+}
+
+function restoreExpandedPaths(expanded: Set<string>) {
+  fileTree.querySelectorAll('.tree-dir').forEach(dir => {
+    const path = (dir as HTMLElement).dataset.path!;
+    const children = dir.nextElementSibling as HTMLElement;
+    if (!children) return;
+    const shouldExpand = expanded.has(path);
+    children.style.display = shouldExpand ? 'block' : 'none';
+    const toggle = dir.querySelector('.tree-toggle');
+    if (toggle) toggle.textContent = shouldExpand ? '\u25BE' : '\u25B8';
+  });
+}
+
 function startTreeRefresh() {
   treeRefreshTimer = setInterval(async () => {
-    // Silently reload tree to pick up git status changes
     try {
       const resp = await fetch('/api/tree');
-      const tree: TreeEntry[] = await resp.json();
+      const text = await resp.text();
+      // Skip rebuild if tree data hasn't changed
+      if (text === lastTreeJSON) return;
+      lastTreeJSON = text;
+
+      const expanded = getExpandedPaths();
+      const tree: TreeEntry[] = JSON.parse(text);
       fileTree.innerHTML = '';
       renderTree(tree, fileTree, 0);
+      restoreExpandedPaths(expanded);
       // Re-mark active file
       document.querySelectorAll('.tree-file').forEach(el => {
         el.classList.toggle('active', (el as HTMLElement).dataset.path === currentFile);
       });
     } catch {}
-  }, 3000);
+  }, 5000);
 }
 
 // ---- Init ----

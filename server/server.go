@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -90,7 +92,14 @@ func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) 
 			WriteBufferSize: 1024,
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
-				return origin == "" || origin == "http://"+r.Host
+				if origin == "" {
+					return true
+				}
+				u, err := url.Parse(origin)
+				if err != nil {
+					return false
+				}
+				return u.Host == r.Host
 			},
 		},
 	}, nil
@@ -114,8 +123,8 @@ func (s *Server) resolveFile(file string) (string, error) {
 	// Clean and resolve
 	clean := filepath.Clean(file)
 	abs := filepath.Join(s.rootDir, clean)
-	// Ensure it's within rootDir
-	if !strings.HasPrefix(abs, s.rootDir) {
+	// Ensure it's within rootDir (check with separator to prevent /foo matching /foobar)
+	if abs != s.rootDir && !strings.HasPrefix(abs, s.rootDir+string(filepath.Separator)) {
 		return "", os.ErrPermission
 	}
 	return abs, nil
@@ -475,7 +484,7 @@ func (s *Server) render(absPath string) ([]byte, error) {
 	return html, nil
 }
 
-func (s *Server) watcher(changes chan<- struct{}, absPath string) {
+func (s *Server) watcher(changes chan<- struct{}, absPath string, done <-chan struct{}) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		s.log.WithError(err).Error("failed to create file watcher")
@@ -483,38 +492,40 @@ func (s *Server) watcher(changes chan<- struct{}, absPath string) {
 	}
 	defer w.Close()
 
-	if err := w.Add(absPath); err != nil {
-		s.log.WithError(err).Error("failed to watch file")
+	// Watch the parent directory to handle vim-style atomic saves (delete+rename).
+	dir := filepath.Dir(absPath)
+	if err := w.Add(dir); err != nil {
+		s.log.WithError(err).Error("failed to watch directory")
 		return
 	}
 
 	changes <- struct{}{} // Send initial render trigger
 
+	base := filepath.Base(absPath)
 	for {
 		select {
 		case <-s.ctx.Done():
 			s.log.Debug("watcher shutting down")
 			return
+		case <-done:
+			return
 		case event, ok := <-w.Events:
 			if !ok {
 				return
+			}
+			// Only react to events for our target file
+			if filepath.Base(event.Name) != base {
+				continue
 			}
 			s.log.WithFields(logrus.Fields{
 				"file":  event.Name,
 				"event": event.Op,
 			}).Debug("file event")
 
-			switch event.Op {
-			case fsnotify.Remove, fsnotify.Rename:
-				go func() {
-					time.Sleep(100 * time.Millisecond)
-					if err := w.Add(absPath); err != nil {
-						s.log.WithError(err).Debug("failed to re-add watch")
-					}
-				}()
-				changes <- struct{}{}
-			case fsnotify.Write, fsnotify.Chmod:
-				changes <- struct{}{}
+			select {
+			case changes <- struct{}{}:
+			default:
+				// already pending
 			}
 		case err, ok := <-w.Errors:
 			if !ok {
@@ -528,12 +539,22 @@ func (s *Server) watcher(changes chan<- struct{}, absPath string) {
 func (s *Server) writer(ws *websocket.Conn, absPath string) {
 	defer ws.Close()
 
+	done := make(chan struct{})
+	var once sync.Once
+	closeDone := func() { once.Do(func() { close(done) }) }
+	defer closeDone()
+
 	pingInterval := 2 * time.Second
 	pingTicker := time.NewTicker(pingInterval)
 	defer pingTicker.Stop()
 
 	changes := make(chan struct{}, 1)
-	go s.watcher(changes, absPath)
+	go s.watcher(changes, absPath, done)
+
+	// Debounce: wait for writes to settle before rendering
+	const debounce = 150 * time.Millisecond
+	var debounceTimer *time.Timer
+	renderCh := make(chan struct{}, 1)
 
 	for {
 		select {
@@ -541,6 +562,16 @@ func (s *Server) writer(ws *websocket.Conn, absPath string) {
 			s.log.Debug("writer shutting down")
 			return
 		case <-changes:
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			debounceTimer = time.AfterFunc(debounce, func() {
+				select {
+				case renderCh <- struct{}{}:
+				default:
+				}
+			})
+		case <-renderCh:
 			rendered, err := s.render(absPath)
 			if err != nil {
 				s.log.WithError(err).Error("failed to render markdown")

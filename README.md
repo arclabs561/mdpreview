@@ -9,12 +9,21 @@ go install github.com/arclabs561/mdpreview@latest
 mdpreview README.md
 ```
 
+Or without installing:
+
+```sh
+go run github.com/arclabs561/mdpreview@latest README.md
+```
+
 Opens a local server at http://127.0.0.1:8080 with a GitHub-styled
 preview. The page updates automatically when the file changes on disk.
 
+Pass a directory to browse all files with a sidebar tree:
+
 ```sh
-mdpreview -addr :3000 README.md   # custom port
-mdpreview -debug README.md        # verbose logging
+mdpreview .                          # serve current directory
+mdpreview -addr :3000 README.md      # custom port
+mdpreview -debug README.md           # verbose logging
 ```
 
 ## Rendering
