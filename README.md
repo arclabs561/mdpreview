@@ -5,14 +5,14 @@ Markdown preview server with live reload.
 ## Usage
 
 ```sh
-go install github.com/arclabs561/mdpreview@latest
+go install github.com/arclabs561/mdpreview@v0.1.0
 mdpreview README.md
 ```
 
 Or without installing:
 
 ```sh
-go run github.com/arclabs561/mdpreview@latest README.md
+go run github.com/arclabs561/mdpreview@v0.1.0 README.md
 ```
 
 Opens a local server at http://127.0.0.1:8080 with a GitHub-styled
