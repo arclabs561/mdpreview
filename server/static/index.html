@@ -244,6 +244,51 @@
             overflow-x: auto;
         }
 
+        /* Diff highlights */
+        @keyframes diff-fade {
+            0%   { background-color: var(--diff-color); }
+            100% { background-color: transparent; }
+        }
+        .diff-changed {
+            --diff-color: rgba(210, 153, 34, 0.15);
+            animation: diff-fade 2s ease-out forwards;
+            border-radius: 3px;
+        }
+        .diff-added {
+            --diff-color: rgba(63, 185, 80, 0.15);
+            animation: diff-fade 2s ease-out forwards;
+            border-radius: 3px;
+        }
+        @media (prefers-color-scheme: dark) {
+            .diff-changed { --diff-color: rgba(210, 153, 34, 0.12); }
+            .diff-added { --diff-color: rgba(63, 185, 80, 0.12); }
+        }
+
+        /* Change map (minimap strip) */
+        #changeMap {
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 6px;
+            height: 100%;
+            pointer-events: none;
+            z-index: 10;
+        }
+        .change-marker {
+            position: absolute;
+            right: 0;
+            width: 6px;
+            min-height: 3px;
+            background: rgba(210, 153, 34, 0.6);
+            border-radius: 1px;
+            pointer-events: auto;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .change-marker:hover { background: rgba(210, 153, 34, 0.9); }
+        .change-marker-added { background: rgba(63, 185, 80, 0.6); }
+        .change-marker-added:hover { background: rgba(63, 185, 80, 0.9); }
+
         /* Lightbox */
         .lightbox {
             position: fixed;

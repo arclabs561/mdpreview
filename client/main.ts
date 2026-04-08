@@ -31,6 +31,7 @@ import langYaml from 'shiki/langs/yaml.mjs';
 let highlighter: HighlighterCore | null = null;
 let ws: WebSocket | null = null;
 let currentFile = '';
+let previousBlocks: string[] = [];
 
 const LANG_MAP: Record<string, string> = {
   sh: 'bash', zsh: 'bash', bash: 'bash',
@@ -157,6 +158,7 @@ function renderTree(entries: TreeEntry[], parent: HTMLElement, depth: number) {
 
 function navigateTo(file: string) {
   currentFile = file;
+  previousBlocks = [];
 
   // Update URL without reload
   const url = new URL(window.location.href);
@@ -248,8 +250,31 @@ function connectWebSocket(file: string) {
     const wrapper = content.closest('.content-wrapper');
     const scrollTop = wrapper ? wrapper.scrollTop : 0;
     content.className = 'markdown-body';
+
+    // Snapshot old block text for diffing
+    const oldBlocks = previousBlocks;
+
+    // Parse new HTML into a temp container to extract blocks
+    const tmp = document.createElement('div');
+    tmp.innerHTML = event.data;
+    const newBlockEls = Array.from(tmp.children) as HTMLElement[];
+    const newBlocks = newBlockEls.map(el => el.textContent || '');
+
+    // Replace content
     content.innerHTML = event.data;
     enhanceMarkdown();
+
+    // Diff and highlight changed blocks
+    if (oldBlocks.length > 0) {
+      markChangedBlocks(oldBlocks, newBlocks);
+    }
+
+    // Save current blocks for next diff
+    previousBlocks = newBlocks;
+
+    // Update change map
+    updateChangeMap();
+
     if (wrapper) {
       requestAnimationFrame(() => { wrapper.scrollTop = scrollTop; });
     }
@@ -539,7 +564,114 @@ function highlightCode() {
   });
 }
 
-// ---- Theme changes ----
+// ---- Diff highlighting ----
+
+function markChangedBlocks(oldBlocks: string[], newBlocks: string[]) {
+  const children = Array.from(content.children) as HTMLElement[];
+  // Simple LCS-based diff to align old and new blocks
+  const lcs = computeLCS(oldBlocks, newBlocks);
+  let oi = 0, ni = 0, li = 0;
+
+  while (ni < newBlocks.length) {
+    if (li < lcs.length && oi < oldBlocks.length && ni < newBlocks.length
+        && oldBlocks[oi] === lcs[li] && newBlocks[ni] === lcs[li]) {
+      // Unchanged block
+      oi++; ni++; li++;
+    } else if (li < lcs.length && newBlocks[ni] === lcs[li]) {
+      // Old block was removed, skip old index
+      oi++;
+    } else {
+      // New or changed block
+      if (children[ni]) {
+        // Check if it matches an old block nearby (changed vs added)
+        const isChanged = oi < oldBlocks.length && oldBlocks[oi] !== newBlocks[ni];
+        children[ni].classList.add(isChanged ? 'diff-changed' : 'diff-added');
+        if (isChanged) oi++;
+      }
+      ni++;
+    }
+  }
+}
+
+function computeLCS(a: string[], b: string[]): string[] {
+  const m = a.length, n = b.length;
+  // For large docs, limit to avoid perf issues
+  if (m * n > 500000) return [];
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  const result: string[] = [];
+  let i = m, j = n;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      result.unshift(a[i - 1]);
+      i--; j--;
+    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  return result;
+}
+
+// ---- Change map (minimap) ----
+
+function updateChangeMap() {
+  let map = document.getElementById('changeMap');
+  if (!map) {
+    map = document.createElement('div');
+    map.id = 'changeMap';
+    const wrapper = content.closest('.content-wrapper');
+    if (wrapper) {
+      (wrapper as HTMLElement).style.position = 'relative';
+      wrapper.appendChild(map);
+    }
+  }
+
+  map.innerHTML = '';
+  const wrapper = content.closest('.content-wrapper');
+  if (!wrapper) return;
+
+  const contentHeight = content.scrollHeight;
+  const wrapperHeight = wrapper.clientHeight;
+  if (contentHeight <= 0) return;
+
+  const changed = content.querySelectorAll('.diff-changed, .diff-added');
+  if (changed.length === 0) {
+    map.style.display = 'none';
+    return;
+  }
+  map.style.display = 'block';
+
+  changed.forEach(el => {
+    const rect = el.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const offsetTop = rect.top - wrapperRect.top + wrapper.scrollTop;
+    const height = rect.height;
+
+    const marker = document.createElement('div');
+    marker.className = 'change-marker';
+    if (el.classList.contains('diff-added')) {
+      marker.classList.add('change-marker-added');
+    }
+    // Position proportionally within the map
+    const topPct = (offsetTop / contentHeight) * 100;
+    const heightPct = Math.max((height / contentHeight) * 100, 0.5);
+    marker.style.top = topPct + '%';
+    marker.style.height = heightPct + '%';
+
+    // Click to scroll to that block
+    marker.addEventListener('click', () => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+
+    map.appendChild(marker);
+  });
+}
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
   // Re-render current content for new theme
   if (currentFile.endsWith('.md')) {
