@@ -26,6 +26,15 @@ var (
 )
 
 func main() {
+	// Check for subcommands before flag.Parse() consumes args
+	if len(os.Args) > 1 && os.Args[1] == "screenshot" {
+		if err := runScreenshot(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	flag.Parse()
 
 	log := logrus.New()
@@ -35,7 +44,7 @@ func main() {
 
 	args := flag.Args()
 	if len(args) < 1 {
-		log.Fatal("usage: mdpreview <file.md | directory>")
+		log.Fatal("usage: mdpreview [screenshot] <file.md | directory>")
 	}
 	path := args[0]
 
