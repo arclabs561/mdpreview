@@ -257,6 +257,14 @@ async function fetchDiffInfo(file: string) {
       if (data.deletions > 0) parts.push(`<span class="diff-del-count">\u2212${data.deletions}</span>`);
       diffStats.innerHTML = parts.join(' ');
     }
+
+    // Re-apply gutter now that diff data is available (fixes race with async load)
+    if (currentFile.endsWith('.md')) {
+      applyGitGutter();
+      updateGitChangeMap();
+    } else {
+      applyCodeGitGutter();
+    }
   } catch {}
 }
 
