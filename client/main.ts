@@ -78,10 +78,10 @@ interface TreeEntry {
 }
 
 const STATUS_COLORS: Record<string, string> = {
-  'M': '#d29922', // yellow - modified
-  'A': '#3fb950', // green - added
-  '?': '#8b949e', // gray - untracked
-  'D': '#f85149', // red - deleted
+  'M': 'var(--attention-fg)',
+  'A': 'var(--success-fg)',
+  '?': 'var(--text-secondary)',
+  'D': 'var(--danger-fg)',
 };
 const STATUS_LABELS: Record<string, string> = {
   'M': 'M', 'A': 'A', '?': 'U', 'D': 'D',

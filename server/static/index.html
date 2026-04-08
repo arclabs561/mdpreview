@@ -7,25 +7,33 @@
     <link rel="stylesheet" href="/static/bundle.css">
     <style>
         :root {
+            /* Primer light theme tokens */
             --bg-primary: #ffffff;
             --bg-secondary: #f6f8fa;
-            --bg-tertiary: #ffffff;
-            --border-color: #d0d7de;
+            --bg-tertiary: #f6f8fa;
+            --border-color: #d1d9e0;
             --text-primary: #1f2328;
-            --text-secondary: #656d76;
+            --text-secondary: #59636e;
             --text-link: #0969da;
+            --success-fg: #1a7f37;
+            --danger-fg: #d1242f;
+            --attention-fg: #9a6700;
             --sidebar-width: 260px;
             --header-height: 48px;
         }
         @media (prefers-color-scheme: dark) {
             :root {
+                /* Primer dark theme tokens */
                 --bg-primary: #0d1117;
-                --bg-secondary: #161b22;
-                --bg-tertiary: #0d1117;
-                --border-color: #30363d;
-                --text-primary: #e6edf3;
-                --text-secondary: #8b949e;
-                --text-link: #58a6ff;
+                --bg-secondary: #151b23;
+                --bg-tertiary: #010409;
+                --border-color: #3d444d;
+                --text-primary: #f0f6fc;
+                --text-secondary: #9198a1;
+                --text-link: #4493f8;
+                --success-fg: #3fb950;
+                --danger-fg: #f85149;
+                --attention-fg: #d29922;
             }
         }
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -76,9 +84,9 @@
             width: 6px;
             height: 6px;
             border-radius: 50%;
-            background: #2da44e;
+            background: var(--success-fg);
         }
-        .status-dot.disconnected { background: #cf222e; }
+        .status-dot.disconnected { background: var(--danger-fg); }
         .last-updated {
             font-size: 11px;
             color: var(--text-secondary);
@@ -116,14 +124,15 @@
         }
         .tree-item:hover { background: var(--bg-primary); }
         .tree-file.active {
-            background: var(--text-link);
-            color: #ffffff !important;
+            background: rgba(from var(--text-link) r g b / 0.1);
+            color: var(--text-primary) !important;
             font-weight: 600;
             border-radius: 6px;
             margin: 0 4px;
+            border-left: 2px solid var(--text-link);
         }
-        .tree-file.active .tree-name { color: #ffffff !important; }
-        .tree-file.active .tree-status { color: #ffffff !important; opacity: 0.7; }
+        .tree-file.active .tree-name { color: var(--text-primary) !important; }
+        .tree-file.active .tree-status { opacity: 0.7; }
         .tree-toggle {
             font-size: 10px;
             width: 12px;
@@ -272,8 +281,8 @@
             align-items: center;
         }
         .diff-stats:empty { display: none; }
-        .diff-add-count { color: #3fb950; }
-        .diff-del-count { color: #f85149; }
+        .diff-add-count { color: var(--success-fg); }
+        .diff-del-count { color: var(--danger-fg); }
 
         /* Git diff gutter markers */
         .git-gutter-added {

@@ -32,8 +32,23 @@ mdpreview -debug README.md           # verbose logging
 - Syntax highlighting via [Shiki](https://shiki.style/) with `github-light` / `github-dark` themes (TextMate grammars, same as VS Code and GitHub)
 - Math via [KaTeX](https://katex.org/) (`$inline$` and `$$block$$`)
 - GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!CAUTION]`)
-- [GitHub Primer](https://primer.style/) CSS with system dark mode detection
+- Colors from [Primer](https://primer.style/) design tokens with system dark mode detection
 - Relative images and links resolve from the markdown file's directory
+- Live diff highlights on edit (fading yellow for changes, green for additions)
+- Git diff gutter and `+N` / `-N` stats for uncommitted changes
+
+## Screenshot
+
+Capture rendered pages as images (requires Chrome/Chromium):
+
+```sh
+mdpreview screenshot README.md                # single file -> README.png
+mdpreview screenshot -o shot.png README.md    # explicit output
+mdpreview screenshot -dark README.md          # force dark mode
+mdpreview screenshot -light README.md         # force light mode
+mdpreview screenshot .                        # directory -> one PNG per .md
+mdpreview screenshot -concat .                # directory -> one tall image
+```
 
 ## Development
 
@@ -42,14 +57,4 @@ Rebuild the client bundle after editing `client/main.ts`:
 ```sh
 make client   # requires bun or npm
 make build    # or just: make
-```
-
-## Screenshot
-
-Capture rendered pages as images:
-
-```sh
-mdpreview screenshot README.md              # single file
-mdpreview screenshot -concat .              # all .md files, one image
-mdpreview screenshot -dark -o out.png file  # dark mode
 ```
