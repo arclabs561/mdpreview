@@ -237,6 +237,7 @@ interface GitDiffInfo {
   deletions: number;
   addedLines?: number[];
   changedLines?: number[];
+  deletedAt?: number[];
 }
 
 let currentDiffInfo: GitDiffInfo | null = null;
@@ -250,12 +251,11 @@ async function fetchDiffInfo(file: string) {
     const data: GitDiffInfo = await resp.json();
     currentDiffInfo = data;
 
-    // Update header stats
     if (data.additions > 0 || data.deletions > 0) {
-      let html = '';
-      if (data.additions > 0) html += `<span class="diff-add-count">+${data.additions}</span>`;
-      if (data.deletions > 0) html += `<span class="diff-del-count">-${data.deletions}</span>`;
-      diffStats.innerHTML = html;
+      let parts: string[] = [];
+      if (data.additions > 0) parts.push(`<span class="diff-add-count">+${data.additions}</span>`);
+      if (data.deletions > 0) parts.push(`<span class="diff-del-count">\u2212${data.deletions}</span>`);
+      diffStats.innerHTML = parts.join(' ');
     }
   } catch {}
 }
@@ -263,10 +263,11 @@ async function fetchDiffInfo(file: string) {
 function applyGitGutter() {
   if (!currentDiffInfo) return;
   const info = currentDiffInfo;
-  if (!info.addedLines?.length && !info.changedLines?.length) return;
+  if (!info.addedLines?.length && !info.changedLines?.length && !info.deletedAt?.length) return;
 
   const addedSet = new Set(info.addedLines || []);
   const changedSet = new Set(info.changedLines || []);
+  const deletedSet = new Set(info.deletedAt || []);
 
   // Use data-source-line attributes injected by the server for precise mapping.
   // Each top-level element has data-source-line="N" indicating its source line.
@@ -286,16 +287,68 @@ function applyGitGutter() {
 
     let hasAdded = false;
     let hasChanged = false;
+    let hasDeleted = false;
     for (let l = startLine; l < endLine; l++) {
       if (addedSet.has(l)) hasAdded = true;
       if (changedSet.has(l)) hasChanged = true;
+      if (deletedSet.has(l)) hasDeleted = true;
     }
 
     if (hasChanged) {
       child.classList.add('git-gutter-changed');
     } else if (hasAdded) {
       child.classList.add('git-gutter-added');
+    } else if (hasDeleted) {
+      child.classList.add('git-gutter-deleted');
     }
+  }
+}
+
+// Git gutter for code file view (line-number-based, exact)
+function applyCodeGitGutter() {
+  if (!currentDiffInfo) return;
+  const info = currentDiffInfo;
+  const addedSet = new Set(info.addedLines || []);
+  const changedSet = new Set(info.changedLines || []);
+  const deletedSet = new Set(info.deletedAt || []);
+
+  const pre = content.querySelector('pre');
+  if (!pre) return;
+  const code = pre.querySelector('code') || pre;
+  const lines = code.querySelectorAll('.line');
+
+  // Shiki wraps each line in a .line span. If not present, fall back to line-number gutter.
+  if (lines.length > 0) {
+    lines.forEach((line, idx) => {
+      const lineNum = idx + 1;
+      if (changedSet.has(lineNum)) {
+        (line as HTMLElement).classList.add('git-line-changed');
+      } else if (addedSet.has(lineNum)) {
+        (line as HTMLElement).classList.add('git-line-added');
+      }
+      if (deletedSet.has(lineNum)) {
+        (line as HTMLElement).classList.add('git-line-deleted-before');
+      }
+    });
+  }
+
+  // Also color the line number gutter
+  const gutter = content.querySelector('.line-numbers');
+  if (gutter) {
+    const nums = gutter.querySelectorAll('span');
+    nums.forEach((span, idx) => {
+      const lineNum = idx + 1;
+      if (changedSet.has(lineNum)) {
+        (span as HTMLElement).style.borderLeft = '3px solid rgba(210, 153, 34, 0.7)';
+        (span as HTMLElement).style.paddingLeft = '4px';
+      } else if (addedSet.has(lineNum)) {
+        (span as HTMLElement).style.borderLeft = '3px solid rgba(63, 185, 80, 0.7)';
+        (span as HTMLElement).style.paddingLeft = '4px';
+      }
+      if (deletedSet.has(lineNum)) {
+        (span as HTMLElement).style.borderBottom = '2px solid rgba(248, 81, 73, 0.5)';
+      }
+    });
   }
 }
 
@@ -450,8 +503,9 @@ async function loadRawFile(file: string) {
 
     content.innerHTML = header + '<div class="code-body">' + codeHtml + '</div>';
 
-    // Add line numbers
+    // Add line numbers and git gutter for code files
     addLineNumbers();
+    applyCodeGitGutter();
   } catch (e) {
     content.className = 'file-error';
     content.textContent = 'Failed to load file';

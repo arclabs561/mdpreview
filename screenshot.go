@@ -35,6 +35,7 @@ func runScreenshot(args []string) error {
 	output := fs.String("o", "", "output file or directory")
 	width := fs.Int("width", 980, "viewport width in pixels")
 	dark := fs.Bool("dark", false, "force dark color scheme")
+	light := fs.Bool("light", false, "force light color scheme")
 	concat := fs.Bool("concat", false, "concatenate all pages into one image")
 	fs.Parse(args)
 
@@ -129,10 +130,11 @@ func runScreenshot(args []string) error {
 	defer timeoutCancel()
 
 	darkMode := *dark
+	lightMode := *light
 
 	if *concat || !info.IsDir() {
 		// Single output: one file or concatenated
-		images, err := screenshotPages(chromeCtx, baseURL, mdFiles, *width, darkMode)
+		images, err := screenshotPages(chromeCtx, baseURL, mdFiles, *width, darkMode, lightMode)
 		if err != nil {
 			return err
 		}
@@ -168,7 +170,7 @@ func runScreenshot(args []string) error {
 			outDir = "."
 		}
 		for _, file := range mdFiles {
-			images, err := screenshotPages(chromeCtx, baseURL, []string{file}, *width, darkMode)
+			images, err := screenshotPages(chromeCtx, baseURL, []string{file}, *width, darkMode, lightMode)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %s: %v\n", file, err)
 				continue
@@ -187,7 +189,7 @@ func runScreenshot(args []string) error {
 }
 
 
-func screenshotPages(ctx context.Context, baseURL string, files []string, width int, dark bool) ([][]byte, error) {
+func screenshotPages(ctx context.Context, baseURL string, files []string, width int, dark, light bool) ([][]byte, error) {
 	var results [][]byte
 
 	for _, file := range files {
@@ -197,11 +199,15 @@ func screenshotPages(ctx context.Context, baseURL string, files []string, width 
 		actions := []chromedp.Action{
 			chromedp.EmulateViewport(int64(width), 800),
 		}
-		if dark {
+		if dark || light {
+			scheme := "dark"
+			if light {
+				scheme = "light"
+			}
 			actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
 				return emulation.SetEmulatedMedia().
 					WithFeatures([]*emulation.MediaFeature{
-						{Name: "prefers-color-scheme", Value: "dark"},
+						{Name: "prefers-color-scheme", Value: scheme},
 					}).Do(ctx)
 			}))
 		}

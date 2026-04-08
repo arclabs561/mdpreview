@@ -671,6 +671,7 @@ type DiffInfo struct {
 	Deletions    int   `json:"deletions"`
 	AddedLines   []int `json:"addedLines,omitempty"`
 	ChangedLines []int `json:"changedLines,omitempty"`
+	DeletedAt    []int `json:"deletedAt,omitempty"` // line numbers where deletions occurred
 }
 
 func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
@@ -707,8 +708,8 @@ func (s *Server) gitDiffInfo(file string) DiffInfo {
 		}
 	}
 
-	// Parse unified diff hunks: @@ -old,count +new,count @@
-	hunkRe := regexp.MustCompile(`@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
+	// Parse unified diff hunks: @@ -oldStart,oldCount +newStart,newCount @@
+	hunkRe := regexp.MustCompile(`@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 	lines := strings.Split(string(out), "\n")
 
 	for i, line := range lines {
@@ -717,11 +718,11 @@ func (s *Server) gitDiffInfo(file string) DiffInfo {
 			continue
 		}
 
-		startLine := 0
-		count := 1
-		fmt.Sscanf(m[1], "%d", &startLine)
-		if m[2] != "" {
-			fmt.Sscanf(m[2], "%d", &count)
+		newStart := 0
+		newCount := 1
+		fmt.Sscanf(m[3], "%d", &newStart)
+		if m[4] != "" {
+			fmt.Sscanf(m[4], "%d", &newCount)
 		}
 
 		// Count additions and deletions in this hunk
@@ -743,7 +744,12 @@ func (s *Server) gitDiffInfo(file string) DiffInfo {
 		info.Additions += hunkAdd
 		info.Deletions += hunkDel
 
-		for l := startLine; l < startLine+count; l++ {
+		if hunkDel > 0 && hunkAdd == 0 {
+			// Pure deletion: mark the line in the new file where content was removed
+			info.DeletedAt = append(info.DeletedAt, newStart)
+		}
+
+		for l := newStart; l < newStart+newCount; l++ {
 			if hunkDel > 0 && hunkAdd > 0 {
 				info.ChangedLines = append(info.ChangedLines, l)
 			} else if hunkAdd > 0 {

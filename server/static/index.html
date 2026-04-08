@@ -159,6 +159,25 @@
         }
         .katex { color: inherit; }
         .markdown-body .shiki { padding: 16px; border-radius: 6px; overflow-x: auto; }
+        .markdown-body pre {
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            background: var(--bg-secondary);
+        }
+        .markdown-body pre code {
+            background: transparent;
+            padding: 0;
+            border: none;
+            font-size: 85%;
+        }
+        .markdown-body code {
+            padding: 0.2em 0.4em;
+            margin: 0;
+            font-size: 85%;
+            background: var(--bg-secondary);
+            border-radius: 6px;
+        }
 
         /* Code file viewing */
         .code-view {
@@ -263,6 +282,18 @@
         }
         .git-gutter-changed {
             border-left: 3px solid rgba(210, 153, 34, 0.7);
+            padding-left: 4px;
+        }
+
+        /* Git line-level gutter (code view) */
+        .git-line-added { background: rgba(63, 185, 80, 0.1); }
+        .git-line-changed { background: rgba(210, 153, 34, 0.1); }
+        .git-line-deleted-before {
+            border-top: 2px solid rgba(248, 81, 73, 0.4);
+        }
+        /* Deleted line marker (markdown view) */
+        .git-gutter-deleted {
+            border-left: 3px solid rgba(248, 81, 73, 0.7);
             padding-left: 4px;
         }
 
