@@ -67,6 +67,7 @@ const content = document.getElementById('content')!;
 const statusDot = document.getElementById('statusDot')!;
 const statusText = document.getElementById('statusText')!;
 const lastUpdated = document.getElementById('lastUpdated')!;
+const diffStats = document.getElementById('diffStats')!;
 
 interface TreeEntry {
   name: string;
@@ -175,6 +176,7 @@ function navigateTo(file: string) {
 
   // Load content
   fetchModTime(file);
+  fetchDiffInfo(file);
   if (file.endsWith('.md')) {
     connectWebSocket(file);
   } else {
@@ -228,6 +230,123 @@ function formatRelativeTime(date: Date): string {
   return date.toLocaleDateString();
 }
 
+// ---- Git diff info ----
+
+interface GitDiffInfo {
+  additions: number;
+  deletions: number;
+  addedLines?: number[];
+  changedLines?: number[];
+}
+
+let currentDiffInfo: GitDiffInfo | null = null;
+
+async function fetchDiffInfo(file: string) {
+  diffStats.innerHTML = '';
+  currentDiffInfo = null;
+  try {
+    const resp = await fetch('/api/diff?file=' + encodeURIComponent(file));
+    if (!resp.ok) return;
+    const data: GitDiffInfo = await resp.json();
+    currentDiffInfo = data;
+
+    // Update header stats
+    if (data.additions > 0 || data.deletions > 0) {
+      let html = '';
+      if (data.additions > 0) html += `<span class="diff-add-count">+${data.additions}</span>`;
+      if (data.deletions > 0) html += `<span class="diff-del-count">-${data.deletions}</span>`;
+      diffStats.innerHTML = html;
+    }
+  } catch {}
+}
+
+function applyGitGutter() {
+  if (!currentDiffInfo) return;
+  const info = currentDiffInfo;
+  if (!info.addedLines?.length && !info.changedLines?.length) return;
+
+  // For markdown: map source lines to rendered blocks.
+  // We approximate by distributing line markers across content children
+  // proportionally based on the file's total line count.
+  const children = Array.from(content.children) as HTMLElement[];
+  if (children.length === 0) return;
+
+  // Estimate total source lines from block count (rough: ~2 source lines per block)
+  // Use the max line number from diff data as a better estimate
+  const allLines = [...(info.addedLines || []), ...(info.changedLines || [])];
+  const maxLine = Math.max(...allLines, 1);
+  const linesPerBlock = maxLine / children.length;
+
+  const addedSet = new Set(info.addedLines || []);
+  const changedSet = new Set(info.changedLines || []);
+
+  children.forEach((child, idx) => {
+    const blockStartLine = Math.floor(idx * linesPerBlock) + 1;
+    const blockEndLine = Math.floor((idx + 1) * linesPerBlock) + 1;
+
+    let hasAdded = false;
+    let hasChanged = false;
+    for (let l = blockStartLine; l < blockEndLine; l++) {
+      if (addedSet.has(l)) hasAdded = true;
+      if (changedSet.has(l)) hasChanged = true;
+    }
+
+    if (hasChanged) {
+      child.classList.add('git-gutter-changed');
+    } else if (hasAdded) {
+      child.classList.add('git-gutter-added');
+    }
+  });
+}
+
+function updateGitChangeMap() {
+  if (!currentDiffInfo) return;
+  const info = currentDiffInfo;
+  if (!info.addedLines?.length && !info.changedLines?.length) return;
+
+  let map = document.getElementById('changeMap');
+  if (!map) {
+    map = document.createElement('div');
+    map.id = 'changeMap';
+    const wrapper = content.closest('.content-wrapper');
+    if (wrapper) {
+      (wrapper as HTMLElement).style.position = 'relative';
+      wrapper.appendChild(map);
+    }
+  }
+  map.style.display = 'block';
+
+  // Add git markers (don't clear -- live-edit markers may also be present)
+  const children = Array.from(content.children) as HTMLElement[];
+  if (children.length === 0) return;
+
+  const wrapper = content.closest('.content-wrapper');
+  if (!wrapper) return;
+  const contentHeight = content.scrollHeight;
+  if (contentHeight <= 0) return;
+
+  const gutterEls = content.querySelectorAll('.git-gutter-added, .git-gutter-changed');
+  gutterEls.forEach(el => {
+    const rect = el.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const offsetTop = rect.top - wrapperRect.top + wrapper.scrollTop;
+
+    const marker = document.createElement('div');
+    marker.className = 'change-marker change-marker-git';
+    if (el.classList.contains('git-gutter-changed')) {
+      marker.classList.add('change-marker-git-changed');
+    }
+    const topPct = (offsetTop / contentHeight) * 100;
+    const heightPct = Math.max((rect.height / contentHeight) * 100, 0.5);
+    marker.style.top = topPct + '%';
+    marker.style.height = heightPct + '%';
+    marker.addEventListener('click', () => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+    map!.appendChild(marker);
+  });
+}
+
 // ---- WebSocket (markdown files) ----
 
 function connectWebSocket(file: string) {
@@ -279,6 +398,7 @@ function connectWebSocket(file: string) {
       requestAnimationFrame(() => { wrapper.scrollTop = scrollTop; });
     }
     fetchModTime(file);
+    fetchDiffInfo(file);
   };
 }
 
@@ -374,6 +494,8 @@ function enhanceMarkdown() {
   highlightCode();
   renderMermaid();
   buildTOC();
+  applyGitGutter();
+  updateGitChangeMap();
 
   // Intercept .md link clicks for in-app navigation
   content.querySelectorAll('a[href]').forEach(a => {

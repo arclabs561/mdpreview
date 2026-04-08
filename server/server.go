@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -144,6 +145,7 @@ func (s *Server) setupHandlers() http.Handler {
 	r.HandleFunc("/api/tree", s.handleTree).Methods("GET")
 	r.HandleFunc("/api/meta", s.handleMeta).Methods("GET")
 	r.HandleFunc("/api/raw", s.handleRaw).Methods("GET")
+	r.HandleFunc("/api/diff", s.handleDiff).Methods("GET")
 	r.HandleFunc("/ws", s.handleWebSocket).Methods("GET")
 	r.PathPrefix("/files/").Handler(localFileHandler).Methods("GET")
 	r.PathPrefix("/").Handler(staticFileHandler).Methods("GET")
@@ -625,4 +627,94 @@ func (s *Server) reader(ws *websocket.Conn) {
 			}
 		}
 	}
+}
+
+// DiffInfo contains line-level git diff information for a file.
+type DiffInfo struct {
+	Additions    int   `json:"additions"`
+	Deletions    int   `json:"deletions"`
+	AddedLines   []int `json:"addedLines,omitempty"`
+	ChangedLines []int `json:"changedLines,omitempty"`
+}
+
+func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	if file == "" {
+		file = s.defaultFile
+	}
+
+	_, err := s.resolveFile(file)
+	if err != nil {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	info := s.gitDiffInfo(file)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(info)
+}
+
+func (s *Server) gitDiffInfo(file string) DiffInfo {
+	var info DiffInfo
+
+	// Get unified diff with line numbers
+	cmd := exec.Command("git", "diff", "--unified=0", "--", file)
+	cmd.Dir = s.rootDir
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		// Try staged changes
+		cmd = exec.Command("git", "diff", "--unified=0", "--cached", "--", file)
+		cmd.Dir = s.rootDir
+		out, err = cmd.Output()
+		if err != nil || len(out) == 0 {
+			return info
+		}
+	}
+
+	// Parse unified diff hunks: @@ -old,count +new,count @@
+	hunkRe := regexp.MustCompile(`@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@`)
+	lines := strings.Split(string(out), "\n")
+
+	for i, line := range lines {
+		m := hunkRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+
+		startLine := 0
+		count := 1
+		fmt.Sscanf(m[1], "%d", &startLine)
+		if m[2] != "" {
+			fmt.Sscanf(m[2], "%d", &count)
+		}
+
+		// Count additions and deletions in this hunk
+		hunkDel := 0
+		hunkAdd := 0
+		for j := i + 1; j < len(lines); j++ {
+			if len(lines[j]) == 0 {
+				continue
+			}
+			if lines[j][0] == '-' {
+				hunkDel++
+			} else if lines[j][0] == '+' {
+				hunkAdd++
+			} else if lines[j][0] == '@' {
+				break
+			}
+		}
+
+		info.Additions += hunkAdd
+		info.Deletions += hunkDel
+
+		for l := startLine; l < startLine+count; l++ {
+			if hunkDel > 0 && hunkAdd > 0 {
+				info.ChangedLines = append(info.ChangedLines, l)
+			} else if hunkAdd > 0 {
+				info.AddedLines = append(info.AddedLines, l)
+			}
+		}
+	}
+
+	return info
 }

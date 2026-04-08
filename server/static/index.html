@@ -244,6 +244,28 @@
             overflow-x: auto;
         }
 
+        /* Diff stats badge */
+        .diff-stats {
+            font-size: 12px;
+            font-family: monospace;
+            display: inline-flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .diff-stats:empty { display: none; }
+        .diff-add-count { color: #3fb950; }
+        .diff-del-count { color: #f85149; }
+
+        /* Git diff gutter markers */
+        .git-gutter-added {
+            border-left: 3px solid rgba(63, 185, 80, 0.7);
+            padding-left: 4px;
+        }
+        .git-gutter-changed {
+            border-left: 3px solid rgba(210, 153, 34, 0.7);
+            padding-left: 4px;
+        }
+
         /* Diff highlights */
         @keyframes diff-fade {
             0%   { background-color: var(--diff-color); }
@@ -288,6 +310,8 @@
         .change-marker:hover { background: rgba(210, 153, 34, 0.9); }
         .change-marker-added { background: rgba(63, 185, 80, 0.6); }
         .change-marker-added:hover { background: rgba(63, 185, 80, 0.9); }
+        .change-marker-git { background: rgba(63, 185, 80, 0.4); opacity: 0.8; }
+        .change-marker-git.change-marker-git-changed { background: rgba(210, 153, 34, 0.4); }
 
         /* Lightbox */
         .lightbox {
@@ -312,6 +336,7 @@
         <button class="header-toggle" onclick="toggleSidebar()" title="Toggle sidebar">&#9776;</button>
         <div id="breadcrumb"></div>
         <div class="header-spacer"></div>
+        <span id="diffStats" class="diff-stats"></span>
         <span id="lastUpdated" class="last-updated"></span>
         <div class="status">
             <span id="statusDot" class="status-dot"></span>
