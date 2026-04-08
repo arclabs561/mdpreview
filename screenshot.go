@@ -10,7 +10,6 @@ import (
 	"image/draw"
 	"image/png"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,11 +22,6 @@ import (
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 	"github.com/sirupsen/logrus"
-	"github.com/urfave/negroni"
-
-	negronilogrus "github.com/meatballhat/negroni-logrus"
-
-	"github.com/arclabs561/mdpreview/server"
 )
 
 func runScreenshot(args []string) error {
@@ -76,31 +70,13 @@ func runScreenshot(args []string) error {
 		cancel() // triggers chromedp cleanup via context tree
 	}()
 
-	s, err := server.New(ctx, serverPath, log)
+	srv, addr, err := startPreviewServer(ctx, serverPath, log)
 	if err != nil {
-		return fmt.Errorf("server init: %w", err)
+		return fmt.Errorf("server: %w", err)
 	}
-	h, err := s.Run()
-	if err != nil {
-		return fmt.Errorf("server run: %w", err)
-	}
-
-	n := negroni.New()
-	n.Use(negroni.NewRecovery())
-	n.Use(negronilogrus.NewMiddlewareFromLogger(log, "web"))
-	n.UseHandler(h)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
-	defer listener.Close()
-
-	srv := &http.Server{Handler: n}
-	go srv.Serve(listener)
 	defer srv.Close()
 
-	baseURL := fmt.Sprintf("http://%s", listener.Addr().String())
+	baseURL := "http://" + addr
 
 	// For directories, discover .md files via the server's tree API
 	if info.IsDir() {

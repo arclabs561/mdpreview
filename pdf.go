@@ -4,8 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,11 +14,6 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/sirupsen/logrus"
-	"github.com/urfave/negroni"
-
-	negronilogrus "github.com/meatballhat/negroni-logrus"
-
-	"github.com/arclabs561/mdpreview/server"
 )
 
 func runPDF(args []string) error {
@@ -49,31 +42,13 @@ func runPDF(args []string) error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() { <-sigCh; cancel() }()
 
-	s, err := server.New(ctx, inputPath, log)
+	srv, addr, err := startPreviewServer(ctx, inputPath, log)
 	if err != nil {
-		return fmt.Errorf("server init: %w", err)
+		return fmt.Errorf("server: %w", err)
 	}
-	h, err := s.Run()
-	if err != nil {
-		return fmt.Errorf("server run: %w", err)
-	}
-
-	n := negroni.New()
-	n.Use(negroni.NewRecovery())
-	n.Use(negronilogrus.NewMiddlewareFromLogger(log, "web"))
-	n.UseHandler(h)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("listen: %w", err)
-	}
-	defer listener.Close()
-
-	srv := &http.Server{Handler: n}
-	go srv.Serve(listener)
 	defer srv.Close()
 
-	pageURL := fmt.Sprintf("http://%s", listener.Addr().String())
+	pageURL := "http://" + addr
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),

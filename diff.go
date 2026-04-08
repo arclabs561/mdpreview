@@ -76,12 +76,7 @@ func runDiff(args []string) error {
 		return err
 	}
 
-	// Also create an index.html that shows both side by side
 	diffHTML := buildDiffHTML(filePath)
-	indexPath := filepath.Join(tmpDir, "index.html")
-	if err := os.WriteFile(indexPath, []byte(diffHTML), 0644); err != nil {
-		return err
-	}
 
 	log := logrus.New()
 	log.SetLevel(logrus.WarnLevel)
@@ -244,7 +239,7 @@ func gitShowHead(dir, relPath string) ([]byte, error) {
 }
 
 func buildDiffHTML(filename string) string {
-	name := filepath.Base(filename)
+	name := strings.ReplaceAll(filepath.Base(filename), "<", "&lt;")
 	return `<!DOCTYPE html>
 <html>
 <head>

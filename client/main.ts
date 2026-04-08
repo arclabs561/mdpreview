@@ -32,6 +32,8 @@ let highlighter: HighlighterCore | null = null;
 let ws: WebSocket | null = null;
 let currentFile = '';
 let previousBlocks: string[] = [];
+let wsRetries = 0;
+const WS_MAX_RETRIES = 5;
 
 const LANG_MAP: Record<string, string> = {
   sh: 'bash', zsh: 'bash', bash: 'bash',
@@ -419,17 +421,17 @@ function connectWebSocket(file: string) {
   ws.onopen = () => {
     statusDot.classList.remove('disconnected');
     statusText.textContent = 'Connected';
+    wsRetries = 0;
   };
 
   ws.onclose = () => {
     statusDot.classList.add('disconnected');
     statusText.textContent = 'Disconnected';
-    // Auto-reconnect with backoff
-    setTimeout(() => {
-      if (currentFile === file && currentFile.endsWith('.md')) {
-        connectWebSocket(file);
-      }
-    }, 2000);
+    if (wsRetries < WS_MAX_RETRIES && currentFile === file && currentFile.endsWith('.md')) {
+      wsRetries++;
+      const delay = Math.min(2000 * Math.pow(2, wsRetries - 1), 30000);
+      setTimeout(() => connectWebSocket(file), delay);
+    }
   };
 
   ws.onmessage = (event) => {

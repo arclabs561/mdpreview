@@ -29,24 +29,23 @@ var (
 func main() {
 	// Check for subcommands before flag.Parse() consumes args
 	if len(os.Args) > 1 {
-		var err error
+		var run func([]string) error
 		switch os.Args[1] {
 		case "screenshot":
-			err = runScreenshot(os.Args[2:])
+			run = runScreenshot
 		case "diff":
-			err = runDiff(os.Args[2:])
+			run = runDiff
 		case "pdf":
-			err = runPDF(os.Args[2:])
-		default:
-			goto parseFlags
+			run = runPDF
 		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
+		if run != nil {
+			if err := run(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
-parseFlags:
 	flag.Parse()
 
 	log := logrus.New()
@@ -56,7 +55,7 @@ parseFlags:
 
 	args := flag.Args()
 	if len(args) < 1 {
-		log.Fatal("usage: mdpreview [screenshot] <file.md | directory>")
+		log.Fatal("usage: mdpreview [screenshot|diff|pdf] <file.md | directory>")
 	}
 	path := args[0]
 
