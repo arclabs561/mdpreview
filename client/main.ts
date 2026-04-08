@@ -424,6 +424,12 @@ function connectWebSocket(file: string) {
   ws.onclose = () => {
     statusDot.classList.add('disconnected');
     statusText.textContent = 'Disconnected';
+    // Auto-reconnect with backoff
+    setTimeout(() => {
+      if (currentFile === file && currentFile.endsWith('.md')) {
+        connectWebSocket(file);
+      }
+    }, 2000);
   };
 
   ws.onmessage = (event) => {
@@ -635,7 +641,8 @@ function buildTOC() {
   const tocEl = document.getElementById('toc');
   if (!tocEl) return;
 
-  const headings = content.querySelectorAll('h1, h2, h3');
+  // Skip h1 (page title), show h2 and h3 only
+  const headings = content.querySelectorAll('h2, h3');
   if (headings.length < 2) {
     tocEl.innerHTML = '';
     return;
@@ -646,7 +653,7 @@ function buildTOC() {
     const level = parseInt(h.tagName[1]);
     const id = h.id || `heading-${i}`;
     if (!h.id) h.id = id;
-    const indent = (level - 1) * 12;
+    const indent = (level - 2) * 12; // h2=0, h3=12
     html += `<li style="padding-left:${indent}px"><a href="#${id}" class="toc-link">${h.textContent}</a></li>`;
   });
   html += '</ul>';
@@ -925,6 +932,39 @@ function startTreeRefresh() {
   }, 5000);
 }
 
+// ---- Sidebar resize ----
+
+function initSidebarResize() {
+  const handle = document.getElementById('sidebarResize');
+  if (!handle) return;
+
+  let startX = 0;
+  let startWidth = 0;
+
+  handle.addEventListener('mousedown', (e: MouseEvent) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startWidth = sidebar.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMouseMove = (e: MouseEvent) => {
+      const newWidth = startWidth + (e.clientX - startX);
+      sidebar.style.width = Math.max(140, Math.min(500, newWidth)) + 'px';
+    };
+    const onMouseUp = () => {
+      handle.classList.remove('dragging');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  });
+}
+
 // ---- Init ----
 async function init() {
   await initHighlighter();
@@ -937,6 +977,7 @@ async function init() {
   }
 
   startTreeRefresh();
+  initSidebarResize();
 }
 
 init();
