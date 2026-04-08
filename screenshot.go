@@ -12,11 +12,15 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/chromedp"
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/negroni"
@@ -60,9 +64,16 @@ func runScreenshot(args []string) error {
 		mdFiles = []string{filepath.Base(inputPath)}
 	}
 
-	// Start server
+	// Start server with signal-based cleanup to prevent zombie Chrome processes
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		cancel() // triggers chromedp cleanup via context tree
+	}()
 
 	s, err := server.New(ctx, serverPath, log)
 	if err != nil {
@@ -106,9 +117,6 @@ func runScreenshot(args []string) error {
 		chromedp.WindowSize(*width, 800),
 		chromedp.Flag("headless", true),
 	)
-	if *dark {
-		opts = append(opts, chromedp.Flag("force-dark-mode", true))
-	}
 
 	allocCtx, allocCancel := chromedp.NewExecAllocator(ctx, opts...)
 	defer allocCancel()
@@ -120,9 +128,11 @@ func runScreenshot(args []string) error {
 	chromeCtx, timeoutCancel := context.WithTimeout(chromeCtx, timeout)
 	defer timeoutCancel()
 
+	darkMode := *dark
+
 	if *concat || !info.IsDir() {
 		// Single output: one file or concatenated
-		images, err := screenshotPages(chromeCtx, baseURL, mdFiles, *width)
+		images, err := screenshotPages(chromeCtx, baseURL, mdFiles, *width, darkMode)
 		if err != nil {
 			return err
 		}
@@ -158,7 +168,7 @@ func runScreenshot(args []string) error {
 			outDir = "."
 		}
 		for _, file := range mdFiles {
-			images, err := screenshotPages(chromeCtx, baseURL, []string{file}, *width)
+			images, err := screenshotPages(chromeCtx, baseURL, []string{file}, *width, darkMode)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "warning: %s: %v\n", file, err)
 				continue
@@ -177,14 +187,25 @@ func runScreenshot(args []string) error {
 }
 
 
-func screenshotPages(ctx context.Context, baseURL string, files []string, width int) ([][]byte, error) {
+func screenshotPages(ctx context.Context, baseURL string, files []string, width int, dark bool) ([][]byte, error) {
 	var results [][]byte
 
 	for _, file := range files {
-		pageURL := fmt.Sprintf("%s/?file=%s", baseURL, file)
+		pageURL := baseURL + "/?file=" + url.QueryEscape(file)
 		var buf []byte
-		err := chromedp.Run(ctx,
+
+		actions := []chromedp.Action{
 			chromedp.EmulateViewport(int64(width), 800),
+		}
+		if dark {
+			actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
+				return emulation.SetEmulatedMedia().
+					WithFeatures([]*emulation.MediaFeature{
+						{Name: "prefers-color-scheme", Value: "dark"},
+					}).Do(ctx)
+			}))
+		}
+		actions = append(actions,
 			chromedp.Navigate(pageURL),
 			chromedp.WaitReady("#content", chromedp.ByID),
 			chromedp.Sleep(500*time.Millisecond),
@@ -200,7 +221,8 @@ func screenshotPages(ctx context.Context, baseURL string, files []string, width 
 			chromedp.Sleep(100*time.Millisecond),
 			chromedp.FullScreenshot(&buf, 90),
 		)
-		if err != nil {
+
+		if err := chromedp.Run(ctx, actions...); err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 		results = append(results, buf)

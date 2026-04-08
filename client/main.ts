@@ -568,25 +568,29 @@ function highlightCode() {
 
 function markChangedBlocks(oldBlocks: string[], newBlocks: string[]) {
   const children = Array.from(content.children) as HTMLElement[];
-  // Simple LCS-based diff to align old and new blocks
   const lcs = computeLCS(oldBlocks, newBlocks);
   let oi = 0, ni = 0, li = 0;
 
   while (ni < newBlocks.length) {
-    if (li < lcs.length && oi < oldBlocks.length && ni < newBlocks.length
+    if (li < lcs.length && oi < oldBlocks.length
         && oldBlocks[oi] === lcs[li] && newBlocks[ni] === lcs[li]) {
-      // Unchanged block
+      // Unchanged block -- all three pointers advance
       oi++; ni++; li++;
-    } else if (li < lcs.length && newBlocks[ni] === lcs[li]) {
-      // Old block was removed, skip old index
-      oi++;
-    } else {
-      // New or changed block
+    } else if (li < lcs.length && oi < oldBlocks.length && newBlocks[ni] !== lcs[li]) {
+      // Current new block doesn't match next LCS element -- it's changed or added
       if (children[ni]) {
-        // Check if it matches an old block nearby (changed vs added)
-        const isChanged = oi < oldBlocks.length && oldBlocks[oi] !== newBlocks[ni];
+        const isChanged = oldBlocks[oi] !== newBlocks[ni];
         children[ni].classList.add(isChanged ? 'diff-changed' : 'diff-added');
         if (isChanged) oi++;
+      }
+      ni++;
+    } else if (oi < oldBlocks.length && oldBlocks[oi] !== (lcs[li] ?? null)) {
+      // Old block was removed (doesn't match next LCS element), skip it
+      oi++;
+    } else {
+      // Fallback: new or changed block (remaining blocks after LCS exhausted)
+      if (children[ni]) {
+        children[ni].classList.add('diff-added');
       }
       ni++;
     }
@@ -637,7 +641,6 @@ function updateChangeMap() {
   if (!wrapper) return;
 
   const contentHeight = content.scrollHeight;
-  const wrapperHeight = wrapper.clientHeight;
   if (contentHeight <= 0) return;
 
   const changed = content.querySelectorAll('.diff-changed, .diff-added');
