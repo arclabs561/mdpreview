@@ -265,28 +265,28 @@ function applyGitGutter() {
   const info = currentDiffInfo;
   if (!info.addedLines?.length && !info.changedLines?.length) return;
 
-  // For markdown: map source lines to rendered blocks.
-  // We approximate by distributing line markers across content children
-  // proportionally based on the file's total line count.
-  const children = Array.from(content.children) as HTMLElement[];
-  if (children.length === 0) return;
-
-  // Estimate total source lines from block count (rough: ~2 source lines per block)
-  // Use the max line number from diff data as a better estimate
-  const allLines = [...(info.addedLines || []), ...(info.changedLines || [])];
-  const maxLine = Math.max(...allLines, 1);
-  const linesPerBlock = maxLine / children.length;
-
   const addedSet = new Set(info.addedLines || []);
   const changedSet = new Set(info.changedLines || []);
 
-  children.forEach((child, idx) => {
-    const blockStartLine = Math.floor(idx * linesPerBlock) + 1;
-    const blockEndLine = Math.floor((idx + 1) * linesPerBlock) + 1;
+  // Use data-source-line attributes injected by the server for precise mapping.
+  // Each top-level element has data-source-line="N" indicating its source line.
+  const children = Array.from(content.children) as HTMLElement[];
+  if (children.length === 0) return;
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const startLine = parseInt(child.dataset.sourceLine || '0', 10);
+    if (startLine === 0) continue;
+
+    // Block spans from this element's start line to the next element's start line
+    const nextChild = children[i + 1] as HTMLElement | undefined;
+    const endLine = nextChild?.dataset.sourceLine
+      ? parseInt(nextChild.dataset.sourceLine, 10)
+      : startLine + 10; // generous fallback for last block
 
     let hasAdded = false;
     let hasChanged = false;
-    for (let l = blockStartLine; l < blockEndLine; l++) {
+    for (let l = startLine; l < endLine; l++) {
       if (addedSet.has(l)) hasAdded = true;
       if (changedSet.has(l)) hasChanged = true;
     }
@@ -296,7 +296,7 @@ function applyGitGutter() {
     } else if (hasAdded) {
       child.classList.add('git-gutter-added');
     }
-  });
+  }
 }
 
 function updateGitChangeMap() {

@@ -43,3 +43,13 @@ Rebuild the client bundle after editing `client/main.ts`:
 make client   # requires bun or npm
 make build    # or just: make
 ```
+
+## Screenshot
+
+Capture rendered pages as images:
+
+```sh
+mdpreview screenshot README.md              # single file
+mdpreview screenshot -concat .              # all .md files, one image
+mdpreview screenshot -dark -o out.png file  # dark mode
+```

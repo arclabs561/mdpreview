@@ -483,7 +483,43 @@ func (s *Server) render(absPath string) ([]byte, error) {
 		return []byte(string(parts[1]) + "/files/" + relPath + string(parts[3]))
 	})
 
+	// Annotate top-level HTML elements with source line numbers.
+	// Parse source markdown to find block-start lines (after blank lines).
+	html = annotateSourceLines(input, html)
+
 	return html, nil
+}
+
+// topLevelTagRe matches opening tags at the start of a line (top-level HTML elements).
+var topLevelTagRe = regexp.MustCompile(`(?m)^<([a-z][a-z0-9]*)`)
+
+func annotateSourceLines(source, html []byte) []byte {
+	// Find the start line of each markdown block (blank-line separated).
+	lines := bytes.Split(source, []byte("\n"))
+	var blockStarts []int
+	inBlock := false
+	for i, line := range lines {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			inBlock = false
+		} else if !inBlock {
+			blockStarts = append(blockStarts, i+1) // 1-indexed
+			inBlock = true
+		}
+	}
+
+	// Inject data-source-line="N" into top-level opening tags, one per block.
+	bi := 0
+	result := topLevelTagRe.ReplaceAllFunc(html, func(match []byte) []byte {
+		if bi >= len(blockStarts) {
+			return match
+		}
+		line := blockStarts[bi]
+		bi++
+		// e.g. <h2 -> <h2 data-source-line="5"
+		return []byte(fmt.Sprintf(`%s data-source-line="%d"`, match, line))
+	})
+	return result
 }
 
 func (s *Server) watcher(changes chan<- struct{}, absPath string, done <-chan struct{}) {
