@@ -574,24 +574,21 @@ function markChangedBlocks(oldBlocks: string[], newBlocks: string[]) {
   while (ni < newBlocks.length) {
     if (li < lcs.length && oi < oldBlocks.length
         && oldBlocks[oi] === lcs[li] && newBlocks[ni] === lcs[li]) {
-      // Unchanged block -- all three pointers advance
+      // All three match: unchanged block
       oi++; ni++; li++;
-    } else if (li < lcs.length && oi < oldBlocks.length && newBlocks[ni] !== lcs[li]) {
-      // Current new block doesn't match next LCS element -- it's changed or added
-      if (children[ni]) {
-        const isChanged = oldBlocks[oi] !== newBlocks[ni];
-        children[ni].classList.add(isChanged ? 'diff-changed' : 'diff-added');
-        if (isChanged) oi++;
+    } else if (oi < oldBlocks.length && (li >= lcs.length || oldBlocks[oi] !== lcs[li])) {
+      // Old block doesn't match next LCS element: it was removed or changed
+      if (newBlocks[ni] !== oldBlocks[oi]) {
+        // Old block was changed to new block
+        if (children[ni]) children[ni].classList.add('diff-changed');
+        oi++; ni++;
+      } else {
+        // Old block was removed (next old doesn't match LCS, but new does match old -- skip old)
+        oi++;
       }
-      ni++;
-    } else if (oi < oldBlocks.length && oldBlocks[oi] !== (lcs[li] ?? null)) {
-      // Old block was removed (doesn't match next LCS element), skip it
-      oi++;
     } else {
-      // Fallback: new or changed block (remaining blocks after LCS exhausted)
-      if (children[ni]) {
-        children[ni].classList.add('diff-added');
-      }
+      // New block doesn't match next LCS element but old does: insertion
+      if (children[ni]) children[ni].classList.add('diff-added');
       ni++;
     }
   }
