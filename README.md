@@ -1,6 +1,6 @@
 # mdpreview
 
-Markdown preview server with live reload.
+Git-aware markdown preview with live reload, diff viewing, and export.
 
 ## Usage
 
@@ -15,27 +15,28 @@ Or without installing:
 go run github.com/arclabs561/mdpreview@v0.1.0 README.md
 ```
 
-Opens a local server at http://127.0.0.1:8080 with a GitHub-styled
-preview. The page updates automatically when the file changes on disk.
-
-Pass a directory to browse all files with a sidebar tree:
+Opens a local server at http://127.0.0.1:8080 with GitHub-accurate
+rendering. The page updates automatically when the file changes on disk,
+highlighting what changed.
 
 ```sh
 mdpreview .                          # serve current directory
 mdpreview -addr :3000 README.md      # custom port
-mdpreview -debug README.md           # verbose logging
+mdpreview -no-open README.md         # don't open browser
 ```
 
-## Rendering
+## Diff
 
-- GFM via [goldmark](https://github.com/yuin/goldmark) (tables, task lists, strikethrough, autolinks)
-- Syntax highlighting via [Shiki](https://shiki.style/) with `github-light` / `github-dark` themes (TextMate grammars, same as VS Code and GitHub)
-- Math via [KaTeX](https://katex.org/) (`$inline$` and `$$block$$`)
-- GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!CAUTION]`)
-- Colors from [Primer](https://primer.style/) design tokens with system dark mode detection
-- Relative images and links resolve from the markdown file's directory
-- Live diff highlights on edit (fading yellow for changes, green for additions)
-- Git diff gutter and `+N` / `-N` stats for uncommitted changes
+View rendered markdown changes side by side (HEAD vs working copy):
+
+```sh
+mdpreview diff README.md             # opens browser with side-by-side view
+mdpreview diff -o diff.png README.md # save as screenshot
+```
+
+The live preview also shows diff indicators: fading highlights on each
+edit, a git diff gutter for uncommitted changes, and `+N` / `-N` stats
+in the header.
 
 ## Screenshot
 
@@ -49,6 +50,24 @@ mdpreview screenshot -light README.md         # force light mode
 mdpreview screenshot .                        # directory -> one PNG per .md
 mdpreview screenshot -concat .                # directory -> one tall image
 ```
+
+## PDF
+
+Export to PDF:
+
+```sh
+mdpreview pdf README.md              # -> README.pdf
+mdpreview pdf -o out.pdf README.md   # explicit output
+```
+
+## Rendering
+
+- GFM via [goldmark](https://github.com/yuin/goldmark) (tables, task lists, strikethrough, autolinks)
+- Syntax highlighting via [Shiki](https://shiki.style/) with `github-light` / `github-dark` themes
+- Math via [KaTeX](https://katex.org/) (`$inline$` and `$$block$$`)
+- GitHub alerts (`> [!NOTE]`, `> [!WARNING]`, `> [!TIP]`, `> [!IMPORTANT]`, `> [!CAUTION]`)
+- Mermaid diagrams
+- Colors from [Primer](https://primer.style/) design tokens with system dark mode detection
 
 ## Development
 

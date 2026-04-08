@@ -21,20 +21,32 @@ import (
 )
 
 var (
-	addr  = flag.String("addr", ":8080", "address to serve preview like :8080 or 0.0.0.0:7000")
-	debug = flag.Bool("debug", false, "debug logging")
+	addr   = flag.String("addr", ":8080", "address to serve preview like :8080 or 0.0.0.0:7000")
+	debug  = flag.Bool("debug", false, "debug logging")
+	noOpen = flag.Bool("no-open", false, "don't open browser on start")
 )
 
 func main() {
 	// Check for subcommands before flag.Parse() consumes args
-	if len(os.Args) > 1 && os.Args[1] == "screenshot" {
-		if err := runScreenshot(os.Args[2:]); err != nil {
+	if len(os.Args) > 1 {
+		var err error
+		switch os.Args[1] {
+		case "screenshot":
+			err = runScreenshot(os.Args[2:])
+		case "diff":
+			err = runDiff(os.Args[2:])
+		case "pdf":
+			err = runPDF(os.Args[2:])
+		default:
+			goto parseFlags
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
-
+parseFlags:
 	flag.Parse()
 
 	log := logrus.New()
@@ -83,10 +95,12 @@ func main() {
 	}()
 
 	// Give the server a moment to start, then open browser
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		openBrowser(url)
-	}()
+	if !*noOpen {
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			openBrowser(url)
+		}()
+	}
 
 	// Wait for interrupt signal for graceful shutdown
 	quit := make(chan os.Signal, 1)
