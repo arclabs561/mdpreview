@@ -2,7 +2,7 @@
 # https://github.com/repository-settings/app
 
 repository:
-  description: "Markdown preview server with live reload"
+  description: "Git-aware markdown preview with live reload, diff viewing, and export"
   private: false
   has_issues: true
   has_wiki: false
@@ -15,5 +15,7 @@ repository:
 
   topics:
     - markdown
+    - markdown-preview
+    - live-reload
     - golang
     - websocket
