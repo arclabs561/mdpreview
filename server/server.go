@@ -582,8 +582,9 @@ func (s *Server) writer(ws *websocket.Conn, absPath string) {
 	closeDone := func() { once.Do(func() { close(done) }) }
 	defer closeDone()
 
-	pingInterval := 2 * time.Second
-	pingTicker := time.NewTicker(pingInterval)
+	// Pings keep intermediate proxies from closing idle connections. Browsers
+	// auto-pong, and the server's read deadline is 60s, so 30s is ample.
+	pingTicker := time.NewTicker(30 * time.Second)
 	defer pingTicker.Stop()
 
 	changes := make(chan struct{}, 1)
