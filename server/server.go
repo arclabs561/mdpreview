@@ -417,7 +417,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	ws, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		if _, ok := err.(websocket.HandshakeError); !ok {
-			s.log.WithError(err)
+			s.log.WithError(err).Warn("websocket upgrade failed")
 		}
 		return
 	}
