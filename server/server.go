@@ -255,7 +255,8 @@ func buildTreeFromPaths(files []string, statusMap map[string]string) []TreeEntry
 		order    []string // preserve insertion order
 	}
 
-	root := &node{children: make(map[string]*node)}
+	// Mark root as a dir so propagate recurses into its children.
+	root := &node{isDir: true, children: make(map[string]*node)}
 
 	for _, file := range files {
 		parts := strings.Split(file, "/")

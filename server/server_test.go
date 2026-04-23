@@ -207,6 +207,10 @@ func TestBuildTreeFromPaths_Structure(t *testing.T) {
 	if tree[1].Name != "top.md" || tree[1].IsDir {
 		t.Errorf("entry 1: want file 'top.md', got %+v", tree[1])
 	}
+	// Status propagates from a/b.md up to the a/ directory.
+	if tree[0].Status != "M" {
+		t.Errorf("dir a status: got %q, want M", tree[0].Status)
+	}
 	// Leaf file status from statusMap is preserved.
 	var bm *TreeEntry
 	for i := range tree[0].Children {
