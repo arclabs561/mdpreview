@@ -164,7 +164,6 @@ func runScreenshot(args []string) error {
 	return nil
 }
 
-
 func screenshotPages(ctx context.Context, baseURL string, files []string, width int, dark, light bool) ([][]byte, error) {
 	var results [][]byte
 

@@ -316,4 +316,3 @@ func buildDiffHTML(filename string) string {
 </body>
 </html>`
 }
-
