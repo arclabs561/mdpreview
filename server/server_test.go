@@ -180,7 +180,7 @@ func TestIsBinary(t *testing.T) {
 	}{
 		{"empty", nil, false},
 		{"plain text", []byte("hello world\n"), false},
-		{"utf8", []byte("héllo ☃"), false},
+		{"utf8 multi-byte", []byte("héllo 世界"), false},
 		{"null byte", []byte{'h', 0, 'i'}, true},
 		{"null after 512", append(bytes.Repeat([]byte("a"), 512), 0), false},
 	} {
