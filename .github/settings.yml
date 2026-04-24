@@ -2,7 +2,7 @@
 # https://github.com/repository-settings/app
 
 repository:
-  description: "Git-aware markdown preview with live reload, diff viewing, and export"
+  description: "Markdown preview with live reload"
   private: false
   has_issues: true
   has_wiki: false

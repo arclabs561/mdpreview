@@ -1,6 +1,6 @@
 # mdpreview
 
-Git-aware markdown preview with live reload, diff viewing, and export.
+Markdown preview with live reload.
 
 ## Usage
 
