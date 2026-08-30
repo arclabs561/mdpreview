@@ -74,6 +74,23 @@ test('edits, previews, and saves a Markdown document', async ({ page }) => {
   await expect.poll(() => readFile(documentPath, 'utf8')).toContain('Edited title');
 });
 
+test('applies Markdown shortcuts without leaving the editor', async ({ page }) => {
+  await page.goto(`${baseURL}/?file=doc.md`);
+  await page.locator('#editToggle').click();
+  const source = page.locator('#editor');
+  await source.fill('selected');
+  await source.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(0, 8));
+  await source.press(process.platform === 'darwin' ? 'Meta+B' : 'Control+B');
+  await expect(source).toHaveValue('**selected**');
+
+  await source.fill('first\nsecond');
+  await source.evaluate((element: HTMLTextAreaElement) => element.setSelectionRange(0, element.value.length));
+  await source.press('Tab');
+  await expect(source).toHaveValue('  first\n  second');
+  await source.press('Shift+Tab');
+  await expect(source).toHaveValue('first\nsecond');
+});
+
 test('preserves a dirty editor when the file changes outside the browser', async ({ page }) => {
   await page.goto(`${baseURL}/?file=doc.md`);
   await page.locator('#editToggle').click();

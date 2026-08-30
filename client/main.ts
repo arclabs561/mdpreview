@@ -276,6 +276,41 @@ function scheduleDraftPreview() {
   previewTimer = setTimeout(renderDraftPreview, 120);
 }
 
+function markEditorDirty() {
+  editorDirty = true;
+  scheduleDraftPreview();
+}
+
+function wrapEditorSelection(prefix: string, suffix: string, placeholder: string) {
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const selected = editor.value.slice(start, end) || placeholder;
+  editor.setRangeText(prefix + selected + suffix, start, end, 'end');
+  editor.setSelectionRange(start + prefix.length, start + prefix.length + selected.length);
+  markEditorDirty();
+}
+
+function indentEditorSelection(outdent: boolean) {
+  const start = editor.selectionStart;
+  const end = editor.selectionEnd;
+  const lineStart = editor.value.lastIndexOf('\n', start - 1) + 1;
+  const nextLine = editor.value.indexOf('\n', end);
+  const lineEnd = nextLine === -1 ? editor.value.length : nextLine;
+  const original = editor.value.slice(lineStart, lineEnd);
+  const originalLines = original.split('\n');
+  const replacementLines = originalLines.map(line => {
+    if (!outdent) return `  ${line}`;
+    return line.replace(/^ {1,2}/, '');
+  });
+  const replacement = replacementLines.join('\n');
+  if (replacement === original) return;
+  const firstLineDelta = replacementLines[0].length - originalLines[0].length;
+  const totalDelta = replacement.length - original.length;
+  editor.setRangeText(replacement, lineStart, lineEnd, 'end');
+  editor.setSelectionRange(start + firstLineDelta, end + totalDelta);
+  markEditorDirty();
+}
+
 async function renderDraftPreview() {
   const sequence = ++renderSequence;
   try {
@@ -1117,13 +1152,25 @@ async function init() {
     setEditorMeta('Keeping local draft');
   });
   editor.addEventListener('input', () => {
-    editorDirty = true;
-    scheduleDraftPreview();
+    markEditorDirty();
   });
   editor.addEventListener('keydown', (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+    const key = event.key.toLowerCase();
+    if ((event.metaKey || event.ctrlKey) && key === 's') {
       event.preventDefault();
       saveEditor();
+    } else if ((event.metaKey || event.ctrlKey) && key === 'b') {
+      event.preventDefault();
+      wrapEditorSelection('**', '**', 'bold text');
+    } else if ((event.metaKey || event.ctrlKey) && key === 'i') {
+      event.preventDefault();
+      wrapEditorSelection('*', '*', 'italic text');
+    } else if ((event.metaKey || event.ctrlKey) && key === 'e') {
+      event.preventDefault();
+      wrapEditorSelection('`', '`', 'code');
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      indentEditorSelection(event.shiftKey);
     }
   });
 }

@@ -209,10 +209,11 @@
         .content-wrapper.editing #editorPane { display: flex; flex-direction: column; }
         .content-wrapper.editing #previewPane { padding: 32px 40px; }
         .editor-meta { min-height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; color: var(--text-secondary); font-size: 12px; border-bottom: 1px solid var(--border-color); }
+        .editor-shortcuts { margin-left: auto; color: var(--text-tertiary); white-space: nowrap; }
         .editor-conflict-actions { display: inline-flex; gap: 6px; margin-left: auto; }
         .editor-conflict-actions[hidden] { display: none; }
         #editor { flex: 1; min-height: 0; width: 100%; resize: none; border: 0; padding: 16px; outline: none; background: transparent; color: var(--text-primary); font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; tab-size: 2; }
-        @media (max-width: 50rem) { .content-wrapper.editing { grid-template-columns: 1fr; } .content-wrapper.editing #previewPane { display: none; } }
+        @media (max-width: 50rem) { .content-wrapper.editing { grid-template-columns: 1fr; } .content-wrapper.editing #previewPane, .editor-shortcuts { display: none; } }
         }
 
         /* Markdown rendering */
@@ -481,6 +482,7 @@
             <section id="editorPane" aria-label="Markdown editor">
                 <div id="editorMeta" class="editor-meta">
                     <span id="editorStatus">Loading source…</span>
+                    <span class="editor-shortcuts">⌘/Ctrl-B bold · I italic · E code · Tab indent</span>
                     <span id="editorConflictActions" class="editor-conflict-actions" hidden>
                         <button id="reloadDiskButton" class="editor-button" type="button">Reload disk version</button>
                         <button id="keepDraftButton" class="editor-button" type="button">Keep draft</button>
