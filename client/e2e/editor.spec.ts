@@ -10,6 +10,7 @@ let server: ChildProcess;
 let baseURL: string;
 let tempDir: string;
 let documentPath: string;
+const fixturePath = join(import.meta.dirname, 'fixture.md');
 
 async function unusedPort(): Promise<number> {
   const listener = createServer();
@@ -39,7 +40,7 @@ async function waitForServer(url: string): Promise<void> {
 test.beforeAll(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'mdpreview-e2e-'));
   documentPath = join(tempDir, 'doc.md');
-  await copyFile(join(import.meta.dirname, 'fixture.md'), documentPath);
+  await copyFile(fixturePath, documentPath);
   const port = await unusedPort();
   baseURL = `http://127.0.0.1:${port}`;
   server = spawn('go', ['run', '.', '-addr', `127.0.0.1:${port}`, '-no-open', documentPath], {
@@ -52,6 +53,10 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   server?.kill('SIGINT');
   await rm(tempDir, { recursive: true, force: true });
+});
+
+test.beforeEach(async () => {
+  await copyFile(fixturePath, documentPath);
 });
 
 test('edits, previews, and saves a Markdown document', async ({ page }) => {
@@ -79,4 +84,17 @@ test('preserves a dirty editor when the file changes outside the browser', async
   await page.locator('#keepDraftButton').click();
   await expect(page.locator('#editorStatus')).toHaveText('Keeping local draft');
   await expect(page.locator('#editor')).toHaveValue('# Local draft');
+});
+
+test('reloads the disk version after an external change', async ({ page }) => {
+  await page.goto(`${baseURL}/?file=doc.md`);
+  await page.locator('#editToggle').click();
+  await page.locator('#editor').fill('# Local draft');
+  await writeFile(documentPath, '# Disk version\n');
+  await expect(page.locator('#editorConflictActions')).toBeVisible();
+
+  await page.locator('#reloadDiskButton').click();
+  await expect(page.locator('#editorConflictActions')).toBeHidden();
+  await expect(page.locator('#editor')).toHaveValue('# Disk version\n');
+  await expect(page.locator('#content')).toContainText('Disk version');
 });
