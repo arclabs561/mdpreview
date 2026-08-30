@@ -134,3 +134,12 @@ test('does not overwrite a stale disk version when saving', async ({ page }) => 
   await expect(page.locator('#editor')).toHaveValue('# Local draft');
   await expect.poll(() => readFile(documentPath, 'utf8')).toBe('# Disk version\n');
 });
+
+test('renders hostile file names as tree text, not markup', async ({ page }) => {
+  const hostileName = '<img src=x onerror=alert(1)>.md';
+  await writeFile(join(tempDir, hostileName), '# Innocuous\n');
+  await page.goto(`${baseURL}/?file=doc.md`);
+
+  await expect(page.locator('#fileTree .tree-name').filter({ hasText: hostileName })).toHaveText(hostileName);
+  await expect(page.locator('#fileTree img')).toHaveCount(0);
+});
