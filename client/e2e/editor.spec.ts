@@ -91,6 +91,12 @@ test('applies Markdown shortcuts without leaving the editor', async ({ page }) =
   await expect(source).toHaveValue('first\nsecond');
 });
 
+test('loads Mermaid only for a document that contains a diagram', async ({ page }) => {
+  await writeFile(documentPath, '```mermaid\nflowchart LR\n  A --> B\n```\n');
+  await page.goto(`${baseURL}/?file=doc.md`);
+  await expect(page.locator('.mermaid-diagram svg')).toBeVisible();
+});
+
 test('preserves a dirty editor when the file changes outside the browser', async ({ page }) => {
   await page.goto(`${baseURL}/?file=doc.md`);
   await page.locator('#editToggle').click();
