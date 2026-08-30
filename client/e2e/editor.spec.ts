@@ -10,6 +10,7 @@ let server: ChildProcess;
 let baseURL: string;
 let tempDir: string;
 let documentPath: string;
+let serverFailure = '';
 const fixturePath = join(import.meta.dirname, 'fixture.md');
 
 async function unusedPort(): Promise<number> {
@@ -27,6 +28,9 @@ async function unusedPort(): Promise<number> {
 async function waitForServer(url: string): Promise<void> {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
+    if (server.exitCode !== null) {
+      throw new Error(`mdpreview server exited (${server.exitCode}): ${serverFailure}`);
+    }
     try {
       if ((await fetch(url)).ok) return;
     } catch {
@@ -43,10 +47,16 @@ test.beforeAll(async () => {
   await copyFile(fixturePath, documentPath);
   const port = await unusedPort();
   baseURL = `http://127.0.0.1:${port}`;
-  server = spawn('go', ['run', '.', '-addr', `127.0.0.1:${port}`, '-no-open', documentPath], {
+  const binary = process.env.MDPREVIEW_E2E_BINARY;
+  const command = binary || 'go';
+  const args = binary
+    ? ['-addr', `127.0.0.1:${port}`, '-no-open', documentPath]
+    : ['run', '.', '-addr', `127.0.0.1:${port}`, '-no-open', documentPath];
+  server = spawn(command, args, {
     cwd: repoRoot,
-    stdio: 'ignore',
+    stdio: ['ignore', 'ignore', 'pipe'],
   });
+  server.stderr?.on('data', chunk => { serverFailure += chunk; });
   await waitForServer(baseURL);
 });
 

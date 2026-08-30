@@ -63,8 +63,12 @@ jobs:
         working-directory: client
         run: bunx playwright install --with-deps chromium
 
+      - name: Build preview server
+        run: go build -o /tmp/mdpreview-e2e .
+
       - name: Run browser tests
         working-directory: client
         run: bun run test:e2e
         env:
           CI: 'true'
+          MDPREVIEW_E2E_BINARY: /tmp/mdpreview-e2e
