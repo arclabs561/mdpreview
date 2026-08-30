@@ -149,8 +149,12 @@ func TestResolveFile_EmptyUsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if abs != path {
-		t.Errorf("resolveFile(\"\"): got %q, want %q", abs, path)
+	want, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if abs != want {
+		t.Errorf("resolveFile(\"\"): got %q, want %q", abs, want)
 	}
 }
 
@@ -167,7 +171,11 @@ func TestResolveFile_Within(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if abs != filepath.Join(dir, "sub", "doc.md") {
+	want, err := filepath.EvalSymlinks(filepath.Join(dir, "sub", "doc.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if abs != want {
 		t.Errorf("resolveFile: got %q", abs)
 	}
 }
@@ -315,6 +323,86 @@ func TestHandleRaw_RejectsTraversal(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", rr.Code)
+	}
+}
+
+func TestHandlersRejectSymlinkEscape(t *testing.T) {
+	dir := t.TempDir()
+	writeMarkdown(t, dir, "README.md", "# safe")
+	outside := writeMarkdown(t, t.TempDir(), "secret.md", "do not expose")
+	if err := os.Symlink(outside, filepath.Join(dir, "leak.md")); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(context.Background(), dir, silentLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := s.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/api/raw?file=leak.md", "/files/leak.md"} {
+		t.Run(target, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+			if rr.Code != http.StatusBadRequest {
+				t.Errorf("status: got %d, want %d", rr.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+func TestRenderDisablesRawHTML(t *testing.T) {
+	s, path := newServerForFile(t, `<img src=x onerror="window.pwned=true">`)
+	rendered, err := s.render(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(rendered, []byte("onerror=")) || bytes.Contains(rendered, []byte("<img")) {
+		t.Fatalf("unsafe HTML survived rendering: %s", rendered)
+	}
+}
+
+func TestHandleSave_RequiresRevisionAndWritesAtomically(t *testing.T) {
+	s, path := newServerForFile(t, "# before")
+	h, err := s.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := httptest.NewRecorder()
+	h.ServeHTTP(raw, httptest.NewRequest(http.MethodGet, "/api/raw?file=doc.md", nil))
+	etag := raw.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("raw response missing ETag")
+	}
+	save := httptest.NewRequest(http.MethodPut, "/api/save?file=doc.md", strings.NewReader("# after"))
+	save.Header.Set("If-Match", etag)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, save)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d body=%q", rr.Code, rr.Body.String())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "# after" {
+		t.Errorf("saved: got %q", got)
+	}
+}
+
+func TestHandleSave_RejectsStaleRevision(t *testing.T) {
+	s, _ := newServerForFile(t, "# before")
+	h, err := s.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPut, "/api/save?file=doc.md", strings.NewReader("# after"))
+	req.Header.Set("If-Match", `"stale"`)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status: got %d, want %d", rr.Code, http.StatusConflict)
 	}
 }
 

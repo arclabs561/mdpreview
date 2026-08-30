@@ -5,14 +5,14 @@ Markdown preview with live reload.
 ## Usage
 
 ```sh
-go install github.com/arclabs561/mdpreview@v0.1.0
+go install github.com/arclabs561/mdpreview@main
 mdpreview README.md
 ```
 
 Or without installing:
 
 ```sh
-go run github.com/arclabs561/mdpreview@v0.1.0 README.md
+go run github.com/arclabs561/mdpreview@main README.md
 ```
 
 Opens a local server at http://127.0.0.1:8080 with GitHub-accurate
@@ -76,4 +76,5 @@ Rebuild the client bundle after editing `client/main.ts`:
 ```sh
 make client   # requires bun or npm
 make build    # or just: make
+make e2e      # requires Playwright's Chromium browser
 ```

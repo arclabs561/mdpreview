@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "github-markdown-css": "^5.9.0",
@@ -12,6 +13,7 @@
     "shiki": "^3.9.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "esbuild": "^0.25.0"
   }
 }

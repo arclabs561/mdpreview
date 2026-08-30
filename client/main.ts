@@ -66,10 +66,24 @@ const sidebar = document.getElementById('sidebar')!;
 const fileTree = document.getElementById('fileTree')!;
 const breadcrumb = document.getElementById('breadcrumb')!;
 const content = document.getElementById('content')!;
+const previewPane = document.getElementById('previewPane')!;
+const contentWrapper = document.querySelector('.content-wrapper')!;
+const editor = document.getElementById('editor') as HTMLTextAreaElement;
+const editorStatus = document.getElementById('editorStatus')!;
+const editorConflictActions = document.getElementById('editorConflictActions')!;
+const reloadDiskButton = document.getElementById('reloadDiskButton') as HTMLButtonElement;
+const keepDraftButton = document.getElementById('keepDraftButton') as HTMLButtonElement;
+const editToggle = document.getElementById('editToggle') as HTMLButtonElement;
+const saveButton = document.getElementById('saveButton') as HTMLButtonElement;
 const statusDot = document.getElementById('statusDot')!;
 const statusText = document.getElementById('statusText')!;
 const lastUpdated = document.getElementById('lastUpdated')!;
 const diffStats = document.getElementById('diffStats')!;
+
+let sourceETag = '';
+let editorDirty = false;
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+let renderSequence = 0;
 
 interface TreeEntry {
   name: string;
@@ -119,15 +133,27 @@ function renderTree(entries: TreeEntry[], parent: HTMLElement, depth: number) {
     item.style.paddingLeft = (12 + depth * 16) + 'px';
     item.dataset.path = entry.path;
 
-    const statusBadge = entry.status
-      ? `<span class="tree-status" style="color:${STATUS_COLORS[entry.status] || ''}">${STATUS_LABELS[entry.status] || ''}</span>`
-      : '';
+    const addStatusBadge = () => {
+      if (!entry.status) return;
+      const badge = document.createElement('span');
+      badge.className = 'tree-status';
+      badge.style.color = STATUS_COLORS[entry.status] || '';
+      badge.textContent = STATUS_LABELS[entry.status] || '';
+      item.appendChild(badge);
+    };
 
     if (entry.isDir) {
       // Auto-expand dirs with modified files, or first level
       const hasChanges = !!entry.status;
       const expanded = depth < 1 || hasChanges;
-      item.innerHTML = `<span class="tree-toggle">${expanded ? '\u25BE' : '\u25B8'}</span> <span class="tree-name">${entry.name}</span>${statusBadge}`;
+      const toggle = document.createElement('span');
+      toggle.className = 'tree-toggle';
+      toggle.textContent = expanded ? '\u25BE' : '\u25B8';
+      const name = document.createElement('span');
+      name.className = 'tree-name';
+      name.textContent = entry.name;
+      item.append(toggle, document.createTextNode(' '), name);
+      addStatusBadge();
       parent.appendChild(item);
 
       const children = document.createElement('div');
@@ -146,8 +172,12 @@ function renderTree(entries: TreeEntry[], parent: HTMLElement, depth: number) {
         renderTree(entry.children, children, depth + 1);
       }
     } else {
-      const nameColor = entry.status ? `style="color:${STATUS_COLORS[entry.status]}"` : '';
-      item.innerHTML = `<span class="tree-name" ${nameColor}>${entry.name}</span>${statusBadge}`;
+      const name = document.createElement('span');
+      name.className = 'tree-name';
+      name.style.color = entry.status ? STATUS_COLORS[entry.status] : '';
+      name.textContent = entry.name;
+      item.appendChild(name);
+      addStatusBadge();
       item.addEventListener('click', (e) => {
         e.stopPropagation();
         navigateTo(entry.path);
@@ -160,8 +190,12 @@ function renderTree(entries: TreeEntry[], parent: HTMLElement, depth: number) {
 // ---- Navigation ----
 
 function navigateTo(file: string) {
+  if (editorDirty && currentFile && currentFile !== file && !window.confirm('Discard unsaved changes?')) {
+    return;
+  }
   currentFile = file;
   previousBlocks = [];
+  editorDirty = false;
 
   // Update URL without reload
   const url = new URL(window.location.href);
@@ -180,26 +214,122 @@ function navigateTo(file: string) {
   fetchModTime(file);
   fetchDiffInfo(file);
   if (file.endsWith('.md')) {
+    loadEditorSource(file);
     connectWebSocket(file);
   } else {
+    closeEditor();
+    editToggle.disabled = true;
+    sourceETag = '';
     disconnectWebSocket();
     loadRawFile(file);
+  }
+}
+
+async function loadEditorSource(file: string) {
+  editToggle.disabled = true;
+  try {
+    const resp = await fetch('/api/raw?file=' + encodeURIComponent(file));
+    if (!resp.ok) throw new Error('source unavailable');
+    const text = await resp.text();
+    if (currentFile !== file || editorDirty) return;
+    editor.value = text;
+    sourceETag = resp.headers.get('ETag') || '';
+    editorDirty = false;
+    clearEditorConflict();
+    editToggle.disabled = false;
+    setEditorMeta('Ready to edit');
+  } catch {
+    if (currentFile === file) setEditorMeta('Source unavailable');
+  }
+}
+
+function setEditorMeta(message: string) { editorStatus.textContent = message; }
+
+function showEditorConflict() { editorConflictActions.hidden = false; }
+
+function clearEditorConflict() { editorConflictActions.hidden = true; }
+
+async function reloadDiskVersion() {
+  const file = currentFile;
+  editorDirty = false;
+  clearEditorConflict();
+  await loadEditorSource(file);
+  if (currentFile === file) renderDraftPreview();
+}
+
+function openEditor() {
+  if (!currentFile.endsWith('.md') || !sourceETag) return;
+  contentWrapper.classList.add('editing');
+  editToggle.textContent = 'Preview';
+  saveButton.hidden = false;
+  editor.focus();
+}
+
+function closeEditor() {
+  contentWrapper.classList.remove('editing');
+  editToggle.textContent = 'Edit';
+  saveButton.hidden = true;
+}
+
+function scheduleDraftPreview() {
+  if (previewTimer) clearTimeout(previewTimer);
+  previewTimer = setTimeout(renderDraftPreview, 120);
+}
+
+async function renderDraftPreview() {
+  const sequence = ++renderSequence;
+  try {
+    const resp = await fetch('/api/render?file=' + encodeURIComponent(currentFile), {
+      method: 'POST', body: editor.value,
+    });
+    if (!resp.ok || sequence !== renderSequence) return;
+    replaceRenderedContent(await resp.text(), false);
+    setEditorMeta(editorDirty ? 'Unsaved changes' : 'Ready to edit');
+  } catch {
+    if (sequence === renderSequence) setEditorMeta('Preview unavailable');
+  }
+}
+
+async function saveEditor() {
+  if (!editorDirty || !sourceETag) return;
+  saveButton.disabled = true;
+  try {
+    const resp = await fetch('/api/save?file=' + encodeURIComponent(currentFile), {
+      method: 'PUT', headers: { 'If-Match': sourceETag }, body: editor.value,
+    });
+    if (resp.status === 409) {
+      setEditorMeta('Changed on disk — reload before saving');
+      showEditorConflict();
+      return;
+    }
+    if (!resp.ok) throw new Error('save failed');
+    sourceETag = resp.headers.get('ETag') || sourceETag;
+    editorDirty = false;
+    setEditorMeta('Saved');
+  } catch {
+    setEditorMeta('Save failed');
+  } finally {
+    saveButton.disabled = false;
   }
 }
 
 function updateBreadcrumb(file: string) {
   const repoName = (window as any).__repoName || 'repo';
   const parts = file.split('/');
-  let html = `<a href="/" class="breadcrumb-link">${repoName}</a>`;
+  breadcrumb.replaceChildren();
+  const root = document.createElement('a');
+  root.href = '/';
+  root.className = 'breadcrumb-link';
+  root.textContent = repoName;
+  breadcrumb.appendChild(root);
   for (let i = 0; i < parts.length; i++) {
     const isLast = i === parts.length - 1;
-    if (isLast) {
-      html += ` / <span class="breadcrumb-current">${parts[i]}</span>`;
-    } else {
-      html += ` / <span class="breadcrumb-dir">${parts[i]}</span>`;
-    }
+    breadcrumb.appendChild(document.createTextNode(' / '));
+    const part = document.createElement('span');
+    part.className = isLast ? 'breadcrumb-current' : 'breadcrumb-dir';
+    part.textContent = parts[i];
+    breadcrumb.appendChild(part);
   }
-  breadcrumb.innerHTML = html;
 }
 
 // ---- File metadata ----
@@ -247,6 +377,7 @@ let currentDiffInfo: GitDiffInfo | null = null;
 async function fetchDiffInfo(file: string) {
   diffStats.innerHTML = '';
   currentDiffInfo = null;
+  document.querySelectorAll('.change-marker-git').forEach(marker => marker.remove());
   try {
     const resp = await fetch('/api/diff?file=' + encodeURIComponent(file));
     if (!resp.ok) return;
@@ -371,20 +502,17 @@ function updateGitChangeMap() {
   if (!map) {
     map = document.createElement('div');
     map.id = 'changeMap';
-    const wrapper = content.closest('.content-wrapper');
-    if (wrapper) {
-      (wrapper as HTMLElement).style.position = 'relative';
-      wrapper.appendChild(map);
-    }
+    previewPane.style.position = 'relative';
+    previewPane.appendChild(map);
   }
   map.style.display = 'block';
+  map.querySelectorAll('.change-marker-git').forEach(marker => marker.remove());
 
   // Add git markers (don't clear -- live-edit markers may also be present)
   const children = Array.from(content.children) as HTMLElement[];
   if (children.length === 0) return;
 
-  const wrapper = content.closest('.content-wrapper');
-  if (!wrapper) return;
+  const wrapper = previewPane;
   const contentHeight = content.scrollHeight;
   if (contentHeight <= 0) return;
 
@@ -412,6 +540,21 @@ function updateGitChangeMap() {
 
 // ---- WebSocket (markdown files) ----
 
+function replaceRenderedContent(html: string, trackChanges: boolean) {
+  const scrollTop = previewPane.scrollTop;
+  content.className = 'markdown-body';
+  const oldBlocks = previousBlocks;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const newBlocks = Array.from(tmp.children, el => el.textContent || '');
+  content.innerHTML = html;
+  enhanceMarkdown();
+  if (trackChanges && oldBlocks.length > 0) markChangedBlocks(oldBlocks, newBlocks);
+  previousBlocks = newBlocks;
+  updateChangeMap();
+  requestAnimationFrame(() => { previewPane.scrollTop = scrollTop; });
+}
+
 function connectWebSocket(file: string) {
   disconnectWebSocket();
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -435,37 +578,12 @@ function connectWebSocket(file: string) {
   };
 
   ws.onmessage = (event) => {
-    const wrapper = content.closest('.content-wrapper');
-    const scrollTop = wrapper ? wrapper.scrollTop : 0;
-    content.className = 'markdown-body';
-
-    // Snapshot old block text for diffing
-    const oldBlocks = previousBlocks;
-
-    // Parse new HTML into a temp container to extract blocks
-    const tmp = document.createElement('div');
-    tmp.innerHTML = event.data;
-    const newBlockEls = Array.from(tmp.children) as HTMLElement[];
-    const newBlocks = newBlockEls.map(el => el.textContent || '');
-
-    // Replace content
-    content.innerHTML = event.data;
-    enhanceMarkdown();
-
-    // Diff and highlight changed blocks
-    if (oldBlocks.length > 0) {
-      markChangedBlocks(oldBlocks, newBlocks);
+    if (editorDirty) {
+      setEditorMeta('Changed on disk — reload before saving');
+      showEditorConflict();
+      return;
     }
-
-    // Save current blocks for next diff
-    previousBlocks = newBlocks;
-
-    // Update change map
-    updateChangeMap();
-
-    if (wrapper) {
-      requestAnimationFrame(() => { wrapper.scrollTop = scrollTop; });
-    }
+    replaceRenderedContent(event.data, true);
     fetchModTime(file);
     fetchDiffInfo(file);
   };
@@ -650,16 +768,27 @@ function buildTOC() {
     return;
   }
 
-  let html = '<div class="toc-title">On this page</div><ul class="toc-list">';
+  tocEl.replaceChildren();
+  const title = document.createElement('div');
+  title.className = 'toc-title';
+  title.textContent = 'On this page';
+  const list = document.createElement('ul');
+  list.className = 'toc-list';
+  tocEl.append(title, list);
   headings.forEach((h, i) => {
     const level = parseInt(h.tagName[1]);
     const id = h.id || `heading-${i}`;
     if (!h.id) h.id = id;
     const indent = (level - 2) * 12; // h2=0, h3=12
-    html += `<li style="padding-left:${indent}px"><a href="#${id}" class="toc-link">${h.textContent}</a></li>`;
+    const item = document.createElement('li');
+    item.style.paddingLeft = indent + 'px';
+    const link = document.createElement('a');
+    link.href = '#' + id;
+    link.className = 'toc-link';
+    link.textContent = h.textContent;
+    item.appendChild(link);
+    list.appendChild(item);
   });
-  html += '</ul>';
-  tocEl.innerHTML = html;
 
   // Scroll spy
   const links = tocEl.querySelectorAll('.toc-link');
@@ -819,23 +948,19 @@ function updateChangeMap() {
   if (!map) {
     map = document.createElement('div');
     map.id = 'changeMap';
-    const wrapper = content.closest('.content-wrapper');
-    if (wrapper) {
-      (wrapper as HTMLElement).style.position = 'relative';
-      wrapper.appendChild(map);
-    }
+    previewPane.style.position = 'relative';
+    previewPane.appendChild(map);
   }
 
-  map.innerHTML = '';
-  const wrapper = content.closest('.content-wrapper');
-  if (!wrapper) return;
+  map.querySelectorAll('.change-marker-live').forEach(marker => marker.remove());
+  const wrapper = previewPane;
 
   const contentHeight = content.scrollHeight;
   if (contentHeight <= 0) return;
 
   const changed = content.querySelectorAll('.diff-changed, .diff-added');
   if (changed.length === 0) {
-    map.style.display = 'none';
+    map.style.display = map.children.length === 0 ? 'none' : 'block';
     return;
   }
   map.style.display = 'block';
@@ -847,7 +972,7 @@ function updateChangeMap() {
     const height = rect.height;
 
     const marker = document.createElement('div');
-    marker.className = 'change-marker';
+    marker.className = 'change-marker change-marker-live';
     if (el.classList.contains('diff-added')) {
       marker.classList.add('change-marker-added');
     }
@@ -980,6 +1105,27 @@ async function init() {
 
   startTreeRefresh();
   initSidebarResize();
+
+  editToggle.addEventListener('click', () => {
+    if (contentWrapper.classList.contains('editing')) closeEditor();
+    else openEditor();
+  });
+  saveButton.addEventListener('click', saveEditor);
+  reloadDiskButton.addEventListener('click', reloadDiskVersion);
+  keepDraftButton.addEventListener('click', () => {
+    clearEditorConflict();
+    setEditorMeta('Keeping local draft');
+  });
+  editor.addEventListener('input', () => {
+    editorDirty = true;
+    scheduleDraftPreview();
+  });
+  editor.addEventListener('keydown', (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      saveEditor();
+    }
+  });
 }
 
 init();

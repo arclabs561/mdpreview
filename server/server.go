@@ -3,10 +3,13 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,7 +29,13 @@ import (
 	emoji "github.com/yuin/goldmark-emoji"
 	"github.com/yuin/goldmark/extension"
 	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/renderer/html"
+)
+
+const maxDocumentSize = 1 << 20
+
+var (
+	errDocumentTooLarge = errors.New("document too large")
+	errBinaryDocument   = errors.New("binary document")
 )
 
 //go:embed static/*
@@ -37,6 +46,7 @@ var staticFiles embed.FS
 type Server struct {
 	ctx           context.Context
 	rootDir       string // directory containing the markdown file(s)
+	rootReal      string // evaluated rootDir, used for symlink-safe containment
 	defaultFile   string // relative path to default file within rootDir
 	indexTemplate *template.Template
 	upgrader      websocket.Upgrader
@@ -59,7 +69,6 @@ func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) 
 	md := goldmark.New(
 		goldmark.WithExtensions(extension.GFM, extension.Footnote, emoji.Emoji),
 		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
-		goldmark.WithRendererOptions(html.WithUnsafe()),
 	)
 
 	// Determine rootDir and defaultFile
@@ -80,10 +89,15 @@ func New(ctx context.Context, path string, log *logrus.Logger) (*Server, error) 
 		rootDir = filepath.Dir(absPath)
 		defaultFile, _ = filepath.Rel(rootDir, absPath)
 	}
+	rootReal, err := filepath.EvalSymlinks(rootDir)
+	if err != nil {
+		return nil, err
+	}
 
 	return &Server{
 		ctx:           ctx,
 		rootDir:       rootDir,
+		rootReal:      rootReal,
 		defaultFile:   defaultFile,
 		log:           log,
 		indexTemplate: indexTemplate,
@@ -115,8 +129,8 @@ func findReadme(dir string) string {
 	return ""
 }
 
-// resolveFile returns the absolute path for a file query, ensuring it's
-// within rootDir (path traversal protection).
+// resolveFile returns an evaluated absolute path within rootDir. Evaluating
+// symlinks prevents an in-tree link from escaping the served directory.
 func (s *Server) resolveFile(file string) (string, error) {
 	if file == "" {
 		file = s.defaultFile
@@ -128,7 +142,14 @@ func (s *Server) resolveFile(file string) (string, error) {
 	if abs != s.rootDir && !strings.HasPrefix(abs, s.rootDir+string(filepath.Separator)) {
 		return "", os.ErrPermission
 	}
-	return abs, nil
+	realPath, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	if realPath != s.rootReal && !strings.HasPrefix(realPath, s.rootReal+string(filepath.Separator)) {
+		return "", os.ErrPermission
+	}
+	return realPath, nil
 }
 
 // Run returns handlers to run the server.
@@ -138,16 +159,16 @@ func (s *Server) Run() (http.Handler, error) {
 
 func (s *Server) setupHandlers() http.Handler {
 	staticFileHandler := http.FileServer(http.FS(staticFiles))
-	localFileHandler := http.StripPrefix("/files/", http.FileServer(http.Dir(s.rootDir)))
-
 	r := mux.NewRouter()
 	r.HandleFunc("/", s.handleIndex).Methods("GET")
 	r.HandleFunc("/api/tree", s.handleTree).Methods("GET")
 	r.HandleFunc("/api/meta", s.handleMeta).Methods("GET")
 	r.HandleFunc("/api/raw", s.handleRaw).Methods("GET")
+	r.HandleFunc("/api/render", s.handleRender).Methods("POST")
+	r.HandleFunc("/api/save", s.handleSave).Methods("PUT")
 	r.HandleFunc("/api/diff", s.handleDiff).Methods("GET")
 	r.HandleFunc("/ws", s.handleWebSocket).Methods("GET")
-	r.PathPrefix("/files/").Handler(localFileHandler).Methods("GET")
+	r.PathPrefix("/files/").HandlerFunc(s.handleLocalFile).Methods("GET")
 	r.PathPrefix("/").Handler(staticFileHandler).Methods("GET")
 
 	return r
@@ -357,28 +378,148 @@ func (s *Server) handleRaw(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
-	info, err := os.Stat(absPath)
-	if err != nil || info.IsDir() {
-		http.Error(w, "Not found", http.StatusNotFound)
-		return
-	}
-	// Limit to reasonable file sizes (1MB)
-	if info.Size() > 1<<20 {
-		http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
-		return
-	}
-	// Check if binary
-	content, err := os.ReadFile(absPath)
+	content, err := readDocument(absPath)
 	if err != nil {
-		http.Error(w, "Read error", http.StatusInternalServerError)
-		return
-	}
-	if isBinary(content) {
-		http.Error(w, "Binary file", http.StatusUnsupportedMediaType)
+		writeDocumentError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write(content)
+	w.Header().Set("ETag", documentETag(content))
+	_, _ = w.Write(content)
+}
+
+func (s *Server) handleRender(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	absPath, err := s.resolveFile(file)
+	if err != nil || !isMarkdown(file) {
+		http.Error(w, "Invalid Markdown file", http.StatusBadRequest)
+		return
+	}
+	input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDocumentSize+1))
+	if err != nil || len(input) > maxDocumentSize || isBinary(input) {
+		http.Error(w, "Invalid document", http.StatusRequestEntityTooLarge)
+		return
+	}
+	rendered, err := s.renderInput(input, absPath)
+	if err != nil {
+		http.Error(w, "Render error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(rendered)
+}
+
+func (s *Server) handleSave(w http.ResponseWriter, r *http.Request) {
+	file := r.URL.Query().Get("file")
+	absPath, err := s.resolveFile(file)
+	if err != nil || !isMarkdown(file) {
+		http.Error(w, "Invalid Markdown file", http.StatusBadRequest)
+		return
+	}
+	current, err := readDocument(absPath)
+	if err != nil {
+		writeDocumentError(w, err)
+		return
+	}
+	if r.Header.Get("If-Match") == "" {
+		http.Error(w, "Missing document revision", http.StatusPreconditionRequired)
+		return
+	}
+	if r.Header.Get("If-Match") != documentETag(current) {
+		http.Error(w, "Document changed on disk", http.StatusConflict)
+		return
+	}
+	input, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxDocumentSize+1))
+	if err != nil || len(input) > maxDocumentSize || isBinary(input) {
+		http.Error(w, "Invalid document", http.StatusRequestEntityTooLarge)
+		return
+	}
+	if err := writeDocumentAtomically(absPath, input); err != nil {
+		http.Error(w, "Save error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("ETag", documentETag(input))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleLocalFile(w http.ResponseWriter, r *http.Request) {
+	file := strings.TrimPrefix(r.URL.Path, "/files/")
+	absPath, err := s.resolveFile(file)
+	if err != nil {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	http.ServeFile(w, r, absPath)
+}
+
+func isMarkdown(file string) bool { return strings.EqualFold(filepath.Ext(file), ".md") }
+
+func documentETag(data []byte) string {
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("\"%x\"", sum[:])
+}
+
+func readDocument(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, os.ErrNotExist
+	}
+	if info.Size() > maxDocumentSize {
+		return nil, errDocumentTooLarge
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if isBinary(data) {
+		return nil, errBinaryDocument
+	}
+	return data, nil
+}
+
+func writeDocumentError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errDocumentTooLarge):
+		http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
+	case errors.Is(err, errBinaryDocument):
+		http.Error(w, "Binary file", http.StatusUnsupportedMediaType)
+	case errors.Is(err, os.ErrNotExist):
+		http.Error(w, "Not found", http.StatusNotFound)
+	default:
+		http.Error(w, "Read error", http.StatusInternalServerError)
+	}
+}
+
+func writeDocumentAtomically(path string, data []byte) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".mdpreview-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func isBinary(data []byte) bool {
@@ -439,11 +580,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 var relURLRe = regexp.MustCompile(`((?:src|href)\s*=\s*")([^"]+)(")`)
 
 func (s *Server) render(absPath string) ([]byte, error) {
-	input, err := os.ReadFile(absPath)
+	input, err := readDocument(absPath)
 	if err != nil {
 		return nil, err
 	}
+	return s.renderInput(input, absPath)
+}
 
+func (s *Server) renderInput(input []byte, absPath string) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := s.md.Convert(input, &buf); err != nil {
 		return nil, err

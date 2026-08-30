@@ -41,3 +41,4 @@ client/node_modules/
 # Test artifacts
 *.png
 .playwright-mcp/
+.agents/
