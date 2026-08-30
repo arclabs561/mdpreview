@@ -7,5 +7,6 @@ export default defineConfig({
     browserName: 'chromium',
     headless: true,
   },
+  workers: process.env.CI ? 1 : undefined,
   reporter: 'line',
 });
