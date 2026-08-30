@@ -98,3 +98,16 @@ test('reloads the disk version after an external change', async ({ page }) => {
   await expect(page.locator('#editor')).toHaveValue('# Disk version\n');
   await expect(page.locator('#content')).toContainText('Disk version');
 });
+
+test('does not overwrite a stale disk version when saving', async ({ page }) => {
+  await page.goto(`${baseURL}/?file=doc.md`);
+  await page.locator('#editToggle').click();
+  await page.locator('#editor').fill('# Local draft');
+  await writeFile(documentPath, '# Disk version\n');
+
+  await page.locator('#saveButton').click();
+  await expect(page.locator('#editorStatus')).toHaveText('Changed on disk — reload before saving');
+  await expect(page.locator('#editorConflictActions')).toBeVisible();
+  await expect(page.locator('#editor')).toHaveValue('# Local draft');
+  await expect.poll(() => readFile(documentPath, 'utf8')).toBe('# Disk version\n');
+});
