@@ -10,7 +10,7 @@
     "github-markdown-css": "^5.9.0",
     "katex": "^0.16.9",
     "mermaid": "^11.14.0",
-    "shiki": "^3.9.1"
+    "shiki": "^4.5.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
