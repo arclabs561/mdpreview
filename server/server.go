@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -149,7 +150,49 @@ func (s *Server) resolveFile(file string) (string, error) {
 	if realPath != s.rootReal && !strings.HasPrefix(realPath, s.rootReal+string(filepath.Separator)) {
 		return "", os.ErrPermission
 	}
+	// Dotfiles (.env, .git/config, ...) hold secrets, not documents. Check the
+	// link target too, so env.txt -> .env is denied. Markdown is allowed so
+	// .github/*.md from the git tree still previews.
+	realRel, _ := filepath.Rel(s.rootReal, realPath)
+	if !isMarkdown(realPath) && (hasDotComponent(clean) || hasDotComponent(realRel)) {
+		return "", os.ErrPermission
+	}
 	return realPath, nil
+}
+
+func hasDotComponent(rel string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part != "." && part != ".." && strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
+// requireLocalHost rejects requests whose Host header is a DNS name other
+// than localhost. A DNS-rebinding page reaches the loopback listener with its
+// own domain as Host; IP literals cannot be rebound, so they stay allowed
+// (this keeps -addr 0.0.0.0:PORT usable by LAN IP).
+func requireLocalHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLocalHost(r.Host) {
+			http.Error(w, "Forbidden host", http.StatusForbidden)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isLocalHost(hostport string) bool {
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.ToLower(strings.Trim(host, "[]")), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	return net.ParseIP(host) != nil
 }
 
 // Run returns handlers to run the server.
@@ -171,7 +214,7 @@ func (s *Server) setupHandlers() http.Handler {
 	r.PathPrefix("/files/").HandlerFunc(s.handleLocalFile).Methods("GET")
 	r.PathPrefix("/").Handler(staticFileHandler).Methods("GET")
 
-	return r
+	return requireLocalHost(r)
 }
 
 // TreeEntry represents a file or directory in the tree.

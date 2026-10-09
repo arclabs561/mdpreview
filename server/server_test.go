@@ -23,6 +23,14 @@ func silentLogger() *logrus.Logger {
 	return l
 }
 
+// newLocalRequest is httptest.NewRequest with a loopback Host, as a browser
+// on 127.0.0.1 sends it (httptest defaults to example.com).
+func newLocalRequest(method, target string, body io.Reader) *http.Request {
+	r := httptest.NewRequest(method, target, body)
+	r.Host = "127.0.0.1:8080"
+	return r
+}
+
 func writeMarkdown(t *testing.T, dir, name, contents string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -253,7 +261,7 @@ func TestHandleIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := newLocalRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
@@ -277,7 +285,7 @@ func TestHandleRaw_ServesText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/raw?file="+filepath.Base(path), nil)
+	req := newLocalRequest(http.MethodGet, "/api/raw?file="+filepath.Base(path), nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -304,7 +312,7 @@ func TestHandleRaw_RejectsBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/raw?file=blob.bin", nil)
+	req := newLocalRequest(http.MethodGet, "/api/raw?file=blob.bin", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnsupportedMediaType {
@@ -318,7 +326,7 @@ func TestHandleRaw_RejectsTraversal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/raw?file=../../../etc/passwd", nil)
+	req := newLocalRequest(http.MethodGet, "/api/raw?file=../../../etc/passwd", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -344,9 +352,88 @@ func TestHandlersRejectSymlinkEscape(t *testing.T) {
 	for _, target := range []string{"/api/raw?file=leak.md", "/files/leak.md"} {
 		t.Run(target, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, target, nil))
+			h.ServeHTTP(rr, newLocalRequest(http.MethodGet, target, nil))
 			if rr.Code != http.StatusBadRequest {
 				t.Errorf("status: got %d, want %d", rr.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
+// A DNS-rebinding page reaches the loopback listener with its own domain in
+// the Host header; every route must refuse it.
+func TestHandlersRejectForeignHost(t *testing.T) {
+	s, _ := newServerForFile(t, "# hi")
+	h, err := s.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"/", "/api/raw?file=doc.md", "/files/doc.md", "/api/tree"} {
+		for _, c := range []struct {
+			host string
+			want int
+		}{
+			{"evil.example:8080", http.StatusForbidden},
+			{"evil.example", http.StatusForbidden},
+			{"127.0.0.1:8080", http.StatusOK},
+			{"localhost:8080", http.StatusOK},
+			{"[::1]:8080", http.StatusOK},
+		} {
+			t.Run(target+" "+c.host, func(t *testing.T) {
+				r := newLocalRequest(http.MethodGet, target, nil)
+				r.Host = c.host
+				rr := httptest.NewRecorder()
+				h.ServeHTTP(rr, r)
+				if rr.Code != c.want {
+					t.Errorf("status: got %d, want %d", rr.Code, c.want)
+				}
+			})
+		}
+	}
+	save := newLocalRequest(http.MethodPut, "/api/save?file=doc.md", strings.NewReader("# pwned"))
+	save.Host = "evil.example:8080"
+	save.Header.Set("If-Match", documentETag([]byte("# hi")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, save)
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("save with foreign Host: got %d, want %d", rr.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlersDenyDotfiles(t *testing.T) {
+	dir := t.TempDir()
+	writeMarkdown(t, dir, "README.md", "# safe")
+	writeMarkdown(t, dir, ".env", "SECRET=1")
+	writeMarkdown(t, dir, ".git/config", "[remote]")
+	writeMarkdown(t, dir, ".github/CONTRIBUTING.md", "# contributing")
+	if err := os.Symlink(filepath.Join(dir, ".env"), filepath.Join(dir, "env.txt")); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(context.Background(), dir, silentLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := s.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		target string
+		want   int
+	}{
+		{"/files/.env", http.StatusBadRequest},
+		{"/api/raw?file=.env", http.StatusBadRequest},
+		{"/files/.git/config", http.StatusBadRequest},
+		{"/files/env.txt", http.StatusBadRequest},
+		{"/api/raw?file=.github/CONTRIBUTING.md", http.StatusOK},
+	} {
+		t.Run(c.target, func(t *testing.T) {
+			r := newLocalRequest(http.MethodGet, c.target, nil)
+			r.Host = "127.0.0.1:8080"
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, r)
+			if rr.Code != c.want {
+				t.Errorf("status: got %d, want %d (body %q)", rr.Code, c.want, rr.Body.String())
 			}
 		})
 	}
@@ -370,12 +457,12 @@ func TestHandleSave_RequiresRevisionAndWritesAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := httptest.NewRecorder()
-	h.ServeHTTP(raw, httptest.NewRequest(http.MethodGet, "/api/raw?file=doc.md", nil))
+	h.ServeHTTP(raw, newLocalRequest(http.MethodGet, "/api/raw?file=doc.md", nil))
 	etag := raw.Header().Get("ETag")
 	if etag == "" {
 		t.Fatal("raw response missing ETag")
 	}
-	save := httptest.NewRequest(http.MethodPut, "/api/save?file=doc.md", strings.NewReader("# after"))
+	save := newLocalRequest(http.MethodPut, "/api/save?file=doc.md", strings.NewReader("# after"))
 	save.Header.Set("If-Match", etag)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, save)
@@ -397,7 +484,7 @@ func TestHandleSave_RejectsStaleRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPut, "/api/save?file=doc.md", strings.NewReader("# after"))
+	req := newLocalRequest(http.MethodPut, "/api/save?file=doc.md", strings.NewReader("# after"))
 	req.Header.Set("If-Match", `"stale"`)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -412,7 +499,7 @@ func TestHandleMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/meta?file="+filepath.Base(path), nil)
+	req := newLocalRequest(http.MethodGet, "/api/meta?file="+filepath.Base(path), nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -440,7 +527,7 @@ func TestHandleTree_NonGitDirWalks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodGet, "/api/tree", nil)
+	req := newLocalRequest(http.MethodGet, "/api/tree", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -482,7 +569,7 @@ func TestCheckOrigin(t *testing.T) {
 		{"malformed no scheme", "localhost", "localhost:8080", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/ws", nil)
+			r := newLocalRequest(http.MethodGet, "/ws", nil)
 			r.Header.Set("Origin", c.origin)
 			r.Host = c.host
 			if got := s.upgrader.CheckOrigin(r); got != c.want {
