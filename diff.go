@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"html"
 	"math"
 	"net"
 	"net/http"
@@ -239,7 +240,7 @@ func gitShowHead(dir, relPath string) ([]byte, error) {
 }
 
 func buildDiffHTML(filename string) string {
-	name := strings.ReplaceAll(filepath.Base(filename), "<", "&lt;")
+	name := html.EscapeString(filepath.Base(filename))
 	return `<!DOCTYPE html>
 <html>
 <head>
