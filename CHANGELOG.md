@@ -5,6 +5,11 @@ reconstructed here.
 
 ## [Unreleased]
 
+### Fixed
+
+- Upgrade bundled KaTeX to 0.18.11 for ordinary and Mermaid math, rejecting
+  inherited rendering options such as a polluted prototype's trust setting.
+
 ### Added
 
 - CI rebuilds the embedded browser client and compares generated bundle,
