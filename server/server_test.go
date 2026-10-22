@@ -7,8 +7,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +55,102 @@ func newServerForFile(t *testing.T, contents string) (*Server, string) {
 		t.Fatalf("New: %v", err)
 	}
 	return s, path
+}
+
+func TestHandleDiffGitEdits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	const original = "first\nsecond\nthird\n"
+	for _, tc := range []struct {
+		name    string
+		staged  string
+		working string
+		want    DiffInfo
+	}{
+		{
+			name:    "replacement",
+			working: "first\nreplacement\nthird\n",
+			want:    DiffInfo{Additions: 1, Deletions: 1, ChangedLines: []int{2}},
+		},
+		{
+			name:    "addition",
+			working: "first\nnew one\nnew two\nsecond\nthird\n",
+			want:    DiffInfo{Additions: 2, AddedLines: []int{2, 3}},
+		},
+		{
+			name:    "deletion",
+			working: "first\nthird\n",
+			want:    DiffInfo{Deletions: 1, DeletedAt: []int{1}},
+		},
+		{
+			name:    "deletion at start",
+			working: "second\nthird\n",
+			want:    DiffInfo{Deletions: 1, DeletedAt: []int{0}},
+		},
+		{
+			name:    "staged only fallback",
+			staged:  "first\nstaged\nthird\n",
+			working: "first\nstaged\nthird\n",
+			want:    DiffInfo{Additions: 1, Deletions: 1, ChangedLines: []int{2}},
+		},
+		{
+			// The gutter reports index-to-worktree changes when both exist;
+			// the staged second-line replacement must not enter this result.
+			name:    "unstaged takes precedence",
+			staged:  "first\nstaged\nthird\n",
+			working: "first\nstaged\nthird\nfourth\n",
+			want:    DiffInfo{Additions: 1, AddedLines: []int{4}},
+		},
+		{name: "unchanged", working: original, want: DiffInfo{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			const filename = "notes with spaces.md"
+			git := func(args ...string) {
+				t.Helper()
+				cmd := exec.Command("git", args...)
+				cmd.Dir = root
+				cmd.Env = append(os.Environ(),
+					"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+					"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+					"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git %v: %v\n%s", args, err, out)
+				}
+			}
+			writeMarkdown(t, root, filename, original)
+			git("init", "-q")
+			git("add", "--", filename)
+			git("commit", "-q", "-m", "initial document")
+			if tc.staged != "" {
+				writeMarkdown(t, root, filename, tc.staged)
+				git("add", "--", filename)
+			}
+			writeMarkdown(t, root, filename, tc.working)
+			s, err := New(context.Background(), root, silentLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			h, err := s.Run()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, newLocalRequest(http.MethodGet,
+				"/api/diff?file="+url.QueryEscape(filename), nil))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+			}
+			var got DiffInfo
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode diff: %v: %s", err, rr.Body.String())
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("diff = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
 }
 
 func TestNew_File(t *testing.T) {
