@@ -2996,7 +2996,7 @@ TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
 
 ========================================================================
-katex@0.16.44
+katex@0.18.11
 
 The MIT License (MIT)
 
