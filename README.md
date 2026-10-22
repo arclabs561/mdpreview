@@ -31,6 +31,11 @@ mdpreview -addr :3000 README.md      # custom port
 mdpreview -no-open README.md         # don't open browser
 ```
 
+The default listener is loopback-only. An explicit address such as
+`-addr 0.0.0.0:8080` exposes the preview and editing API to reachable clients
+without authentication. Use that only on a trusted network or behind an
+authenticated proxy.
+
 ## Editing
 
 The **Edit** button opens the Markdown source beside the preview. Cmd/Ctrl-S
