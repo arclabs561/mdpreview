@@ -61,6 +61,10 @@ jobs:
         working-directory: client
         run: bun install --frozen-lockfile
 
+      - name: Check embedded client freshness
+        working-directory: client
+        run: node check-build.mjs
+
       - name: Install Chromium
         working-directory: client
         run: bunx playwright install --with-deps chromium
