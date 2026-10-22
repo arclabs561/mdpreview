@@ -107,6 +107,40 @@ test('loads Mermaid only for a document that contains a diagram', async ({ page 
   await expect(page.locator('.mermaid-diagram svg')).toBeVisible();
 });
 
+test('renders inline, display, and fenced math', async ({ page }) => {
+  await writeFile(documentPath, '$x^2$\n\n$$y^2$$\n\n```math\nz^2\n```\n');
+  await page.goto(`${baseURL}/?file=doc.md`);
+  await expect(page.locator('#content .katex')).toHaveCount(3);
+  await expect(page.locator('#content .katex-display')).toHaveCount(2);
+  await expect(page.locator('#content .katex-error')).toHaveCount(0);
+  await expect(page.locator('#content math annotation')).toHaveText(['x^2', 'y^2', 'z^2']);
+});
+
+test('renders Mermaid math with the shared KaTeX dependency', async ({ page }) => {
+  await writeFile(documentPath, '```mermaid\nflowchart LR\n  A["$$x^2$$"] --> B["end"]\n```\n');
+  await page.goto(`${baseURL}/?file=doc.md`);
+  await expect(page.locator('.mermaid-diagram svg')).toBeVisible();
+  await expect(page.locator('.mermaid-diagram .katex')).toHaveCount(1);
+  // Mermaid strips source annotations; assert the rendered exponent instead.
+  await expect(page.locator('.mermaid-diagram math msup mi')).toHaveText('x');
+  await expect(page.locator('.mermaid-diagram math msup mn')).toHaveText('2');
+});
+
+test('does not inherit trusted math from Object.prototype', async ({ page }) => {
+  // Supply the advisory's precondition explicitly; this does not assert that
+  // the application itself has a prototype-pollution vulnerability.
+  await page.addInitScript(() => {
+    Object.defineProperty(Object.prototype, 'trust', {
+      value: true, writable: true, configurable: true,
+    });
+  });
+  await writeFile(documentPath,
+    '```math\n\\href{https://example.invalid/katex-trust}{untrusted}\n```\n');
+  await page.goto(`${baseURL}/?file=doc.md`);
+  await expect(page.locator('#content .katex')).toHaveCount(1);
+  await expect(page.locator('#content a[href="https://example.invalid/katex-trust"]')).toHaveCount(0);
+});
+
 test('preserves a dirty editor when the file changes outside the browser', async ({ page }) => {
   await page.goto(`${baseURL}/?file=doc.md`);
   await page.locator('#editToggle').click();

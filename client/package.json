@@ -8,9 +8,12 @@
   },
   "dependencies": {
     "github-markdown-css": "^5.9.0",
-    "katex": "^0.16.9",
+    "katex": "^0.18.11",
     "mermaid": "^11.14.0",
     "shiki": "^3.9.1"
+  },
+  "overrides": {
+    "katex": "^0.18.11"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
