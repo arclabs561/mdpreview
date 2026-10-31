@@ -2,9 +2,8 @@
 
 Markdown preview with live reload.
 
-`glow` renders Markdown in the terminal and `grip` renders through GitHub's
-API; mdpreview renders locally in the browser, with math, Mermaid, change
-highlighting and a HEAD-vs-working-copy diff.
+`mdpreview` renders Markdown locally in the browser, with math, Mermaid,
+change highlighting and a HEAD-vs-working-copy diff.
 
 ## Usage
 
@@ -96,3 +95,7 @@ make client   # requires bun or npm
 make build    # or just: make
 make e2e      # requires Playwright's Chromium browser
 ```
+
+## License
+
+MIT
