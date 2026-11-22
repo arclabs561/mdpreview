@@ -150,8 +150,7 @@ func runDiff(args []string) error {
 	chromeCtx, timeoutCancel := context.WithTimeout(chromeCtx, 30*time.Second)
 	defer timeoutCancel()
 
-	var buf []byte
-	actions := []chromedp.Action{
+	actions := []chromedp.Action[chromedp.Void]{
 		chromedp.EmulateViewport(int64(*width), 800),
 	}
 	if *dark || *light {
@@ -159,32 +158,34 @@ func runDiff(args []string) error {
 		if *light {
 			scheme = "light"
 		}
-		actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
-			return emulation.SetEmulatedMedia().
-				WithFeatures([]*emulation.MediaFeature{
-					{Name: "prefers-color-scheme", Value: scheme},
-				}).Do(ctx)
+		actions = append(actions, chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
+			_, err := chromedp.Call(ctx, emulation.SetEmulatedMedia, emulation.SetEmulatedMediaParams{Features: []*emulation.MediaFeature{{Name: "prefers-color-scheme", Value: scheme}}})
+			return err
 		}))
 	}
 	actions = append(actions,
 		chromedp.Navigate(diffURL),
 		chromedp.Sleep(2*time.Second),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			var height float64
-			if err := chromedp.Evaluate(`document.body.scrollHeight`, &height).Do(ctx); err != nil {
+		chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
+			height, err := chromedp.Evaluate[float64](`document.body.scrollHeight`)(ctx, target)
+			if err != nil {
 				return err
 			}
 			h := max(int64(math.Ceil(height)), 800)
-			return chromedp.EmulateViewport(int64(*width), h).Do(ctx)
+			_, err = chromedp.EmulateViewport(int64(*width), h)(ctx, target)
+			return err
 		}),
 		chromedp.Sleep(200*time.Millisecond),
-		chromedp.FullScreenshot(&buf, 90),
 	)
 
-	if err := chromedp.Run(chromeCtx, actions...); err != nil {
+	if err := chromedp.Do(chromeCtx, actions...); err != nil {
 		return fmt.Errorf("screenshot: %w", err)
 	}
 
+	buf, err := chromedp.Run(chromeCtx, chromedp.FullScreenshot(100))
+	if err != nil {
+		return fmt.Errorf("screenshot: %w", err)
+	}
 	if err := os.WriteFile(*output, buf, 0644); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}

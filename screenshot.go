@@ -169,9 +169,8 @@ func screenshotPages(ctx context.Context, baseURL string, files []string, width 
 
 	for _, file := range files {
 		pageURL := baseURL + "/?file=" + url.QueryEscape(file)
-		var buf []byte
 
-		actions := []chromedp.Action{
+		actions := []chromedp.Action[chromedp.Void]{
 			chromedp.EmulateViewport(int64(width), 800),
 		}
 		if dark || light {
@@ -179,31 +178,33 @@ func screenshotPages(ctx context.Context, baseURL string, files []string, width 
 			if light {
 				scheme = "light"
 			}
-			actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
-				return emulation.SetEmulatedMedia().
-					WithFeatures([]*emulation.MediaFeature{
-						{Name: "prefers-color-scheme", Value: scheme},
-					}).Do(ctx)
+			actions = append(actions, chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
+				_, err := chromedp.Call(ctx, emulation.SetEmulatedMedia, emulation.SetEmulatedMediaParams{Features: []*emulation.MediaFeature{{Name: "prefers-color-scheme", Value: scheme}}})
+				return err
 			}))
 		}
 		actions = append(actions,
 			chromedp.Navigate(pageURL),
-			chromedp.WaitReady("#content", chromedp.ByID),
+			chromedp.WaitReady(chromedp.CSS("#content")),
 			chromedp.Sleep(500*time.Millisecond),
 			// Resize to full content height
-			chromedp.ActionFunc(func(ctx context.Context) error {
-				var height float64
-				if err := chromedp.Evaluate(`document.querySelector('.content-wrapper').scrollHeight`, &height).Do(ctx); err != nil {
+			chromedp.Func(func(ctx context.Context, target *chromedp.Target) error {
+				height, err := chromedp.Evaluate[float64](`document.querySelector('.content-wrapper').scrollHeight`)(ctx, target)
+				if err != nil {
 					return err
 				}
 				h := max(int64(math.Ceil(height)), 800) + 48
-				return chromedp.EmulateViewport(int64(width), h).Do(ctx)
+				_, err = chromedp.EmulateViewport(int64(width), h)(ctx, target)
+				return err
 			}),
 			chromedp.Sleep(100*time.Millisecond),
-			chromedp.FullScreenshot(&buf, 90),
 		)
 
-		if err := chromedp.Run(ctx, actions...); err != nil {
+		if err := chromedp.Do(ctx, actions...); err != nil {
+			return nil, fmt.Errorf("%s: %w", file, err)
+		}
+		buf, err := chromedp.Run(ctx, chromedp.FullScreenshot(100))
+		if err != nil {
 			return nil, fmt.Errorf("%s: %w", file, err)
 		}
 		results = append(results, buf)
