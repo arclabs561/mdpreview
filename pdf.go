@@ -11,7 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/sirupsen/logrus"
 )
@@ -63,36 +62,27 @@ func runPDF(args []string) error {
 	chromeCtx, timeoutCancel := context.WithTimeout(chromeCtx, 30*time.Second)
 	defer timeoutCancel()
 
-	var buf []byte
-	err = chromedp.Run(chromeCtx,
+	err = chromedp.Do(chromeCtx,
 		chromedp.Navigate(pageURL),
-		chromedp.WaitReady("#content", chromedp.ByID),
+		chromedp.WaitReady(chromedp.CSS("#content")),
 		chromedp.Sleep(1*time.Second),
 		// Hide sidebar and header for clean PDF
-		chromedp.Evaluate(`
+		chromedp.Evaluate[chromedp.Void](`
 			document.getElementById('sidebar').style.display = 'none';
 			document.querySelector('.header').style.display = 'none';
 			document.querySelector('.content-wrapper').style.padding = '0';
 			document.querySelector('.markdown-body').style.maxWidth = 'none';
-		`, nil),
+		`),
 		chromedp.Sleep(200*time.Millisecond),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			var err error
-			buf, _, err = page.PrintToPDF().
-				WithPrintBackground(true).
-				WithPreferCSSPageSize(true).
-				WithMarginTop(0.5).
-				WithMarginBottom(0.5).
-				WithMarginLeft(0.5).
-				WithMarginRight(0.5).
-				Do(ctx)
-			return err
-		}),
 	)
 	if err != nil {
 		return fmt.Errorf("pdf: %w", err)
 	}
 
+	buf, err := chromedp.Run(chromeCtx, chromedp.PrintToPDF(chromedp.PDFPrintBackground(), chromedp.PDFPreferCSSPageSize(), chromedp.PDFMargin(0.5)))
+	if err != nil {
+		return fmt.Errorf("pdf: %w", err)
+	}
 	if err := os.WriteFile(outPath, buf, 0644); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
