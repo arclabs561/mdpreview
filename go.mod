@@ -3,8 +3,8 @@ module github.com/arclabs561/mdpreview
 go 1.26
 
 require (
-	github.com/chromedp/cdproto v0.159.0
-	github.com/chromedp/chromedp v0.21.0
+	github.com/chromedp/cdproto v0.160.8
+	github.com/chromedp/chromedp v0.24.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.3
